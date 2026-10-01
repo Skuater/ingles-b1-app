@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Inglés B1</title>
+  <meta name="theme-color" content="#1B252D">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <p id="aviso-fecha" hidden></p>
+  <main id="vista" aria-live="polite"></main>
+  <nav class="tabs" aria-label="Pantallas">
+    <button data-vista="hoy">Hoy</button>
+    <button data-vista="semana">Semana</button>
+    <button data-vista="ruta">Ruta</button>
+    <button data-vista="criterios">Criterios</button>
+    <button data-vista="datos" class="datos">Datos</button>
+  </nav>
+  <dialog id="hoja"></dialog>
+  <div id="toast" role="status"></div>
+  <script src="plan.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
