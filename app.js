@@ -477,7 +477,7 @@ function vistaDatos() {
     <h2 class="h2">Borrar todo</h2>
     <p class="ayuda">Elimina sesiones, mediciones y semáforos. No se puede deshacer.</p>
     <button class="boton peligro" data-acc="borrar-todo">Borrar todos los datos</button>
-    <p class="version">Versión 1.2, diseño de fichas. Plan v3.</p>`;
+    <p class="version">Versión 1.3, resumen global en Ruta. Plan v3.</p>`;
 }
 
 /* ================= Hojas (formularios) ================= */
