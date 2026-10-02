@@ -372,6 +372,14 @@ function vistaRuta() {
   const resumenes = SEMANAS.map((s) => resumen(s.n));
   const cerradas = resumenes.filter((r) => r.cerrada && esNormal(r.n));
   const media = cerradas.length ? fmtH(cerradas.reduce((a, r) => a + r.hecho, 0) / cerradas.length) : null;
+
+  // Resumen global
+  const totalHecho = resumenes.reduce((a, r) => a + r.hecho, 0);
+  const totalPlan  = resumenes.reduce((a, r) => a + r.plan, 0);
+  const pct        = totalPlan > 0 ? Math.round((totalHecho / totalPlan) * 100) : 0;
+  const planAFecha = resumenes.reduce((a, r) => a + r.planAFecha, 0);
+  const pctFecha   = planAFecha > 0 ? Math.round((totalHecho / planAFecha) * 100) : 0;
+
   const cab = SEMANAS.map((s) => `<th scope="col" class="${s.n === act ? 'act' : ''}">${s.n}</th>`).join('');
   const marcas = SEMANAS.map((s) => `<td class="mk">${s.examen ? '●' : s.puerta ? '▲' : s.diag ? '◆' : s.comprob ? '△' : ''}</td>`).join('');
   const filas = DIAS.map((d, i) => `<tr><th scope="row">${d}</th>${resumenes.map((r) => {
@@ -394,8 +402,20 @@ function vistaRuta() {
   }).join('');
   const y9 = H - (540 / max) * (H - 14);
 
-  return `<section class="cabecera sem-cab"><p class="grande cifra">${act < 1 ? 'S0' : `S${act}`}<span class="de"> de 30</span></p>
-      <p class="sub-cab">${media ? `Media de las semanas normales cerradas: ${media} h.` : 'Todavía no hay semanas cerradas.'}</p></section>
+  const subGlobal = totalHecho > 0 || act >= 1
+    ? `<strong>${fmtH(totalHecho)} h</strong> hechas · <strong>${pct} %</strong> del plan`
+      + (media ? ` · media cerradas: ${media} h` : '')
+    : 'Todavía no hay semanas cerradas.';
+
+  const lineaFecha = (act >= 1 && planAFecha > 0)
+    ? `<p class="ayuda">Respecto a lo previsto hasta hoy: ${pctFecha} %.</p>`
+    : '';
+
+  return `<section class="cabecera sem-cab">
+      <p class="grande cifra">${act < 1 ? 'S0' : `S${act}`}<span class="de"> de 30</span></p>
+      <p class="sub-cab">${subGlobal}</p>
+      ${lineaFecha}
+    </section>
     <div class="rejilla-scroll"><table class="rejilla"><thead><tr><th></th>${cab}</tr><tr><th></th>${marcas}</tr></thead><tbody>${filas}</tbody></table></div>
     <p class="leyenda-r"><span><i class="c n3"></i>Completo</span><span><i class="c n2"></i>Parcial</span><span><i class="c n0"></i>Sin hacer</span><span><i class="c desc"></i>Descarga</span></p>
     <p class="leyenda-r"><span>◆ Mini-diagnóstico</span><span>△ Comprobación</span><span>▲ Puerta</span><span>● Examen</span></p>
