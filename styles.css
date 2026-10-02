@@ -275,3 +275,34 @@ nav.tabs .datos { border-left: 1px solid var(--rail-borde); font-size: 16px; }
   color: var(--claro);
   font-weight: 700;
 }
+
+/* ---------- Resumen del día y tendencias (v1.4) ---------- */
+.resumen-hoy {
+  margin: 0 4px 14px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--txt);
+  line-height: 1.35;
+}
+.crit-cuerpo header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+.tend {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.tend.t-mejorando { background: color-mix(in srgb, #5a9e6f 25%, transparent); color: #8fd4a0; }
+.tend.t-bajando { background: color-mix(in srgb, #d0705f 25%, transparent); color: #e8a090; }
+.tend.t-estable { background: color-mix(in srgb, var(--txt-2) 20%, transparent); color: var(--txt-2); }
+.hoja-form textarea[name="nota"] {
+  width: 100%;
+  resize: vertical;
+  min-height: 2.6em;
+}

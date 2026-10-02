@@ -1,6 +1,6 @@
 /* sw.js — Hace que la app funcione sin conexión.
    Al cambiar cualquier archivo de la app, sube el número de VERSION. */
-const VERSION = 'b1-v5';
+const VERSION = 'b1-v6';
 const APP = ['./', './index.html', './styles.css', './plan.js', './db.js', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 
@@ -14,7 +14,6 @@ self.addEventListener('activate', (e) => {
       Promise.all(
         ks
           // Solo borra cachés de esta app (nombres que empiezan por "b1-")
-          // y deja intactas las de otras PWAs en el mismo dominio.
           .filter((k) => k.startsWith('b1-') && k !== VERSION)
           .map((k) => caches.delete(k))
       )
@@ -27,7 +26,6 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   const fuente = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if (url.origin !== location.origin && !fuente) return;
-  // Primero la caché; en segundo plano se actualiza desde la red
   e.respondWith(caches.open(VERSION).then(async (c) => {
     const guardada = await c.match(e.request, { ignoreSearch: !fuente });
     const red = fetch(e.request).then((r) => { if (r.ok || r.type === 'opaque') c.put(e.request, r.clone()); return r; }).catch(() => guardada);

@@ -39,10 +39,12 @@ async function setAjuste(k, v) {
 const clave = (f, b) => `${iso(f)}|${b.id}`;
 const minHecho = (s) => (s && (s.estado === 'hecha' || s.estado === 'parcial') ? s.minReal : 0);
 
-async function guardarSesion(f, b, estado, minReal) {
+async function guardarSesion(f, b, estado, minReal, nota) {
   const key = clave(f, b);
   if (estado === 'pendiente') { S.ses.delete(key); await DB.borrar('sesiones', key); return; }
   const s = { key, fecha: iso(f), semana: semanaDe(f), bloque: b.id, sk: b.sk, minPlan: b.min, minReal: estado === 'saltada' ? 0 : minReal, estado };
+  const n = (nota ?? '').trim();
+  if (n) s.nota = n;
   S.ses.set(key, s); await DB.poner('sesiones', s);
 }
 async function guardarMediciones(ref, fecha, lista) {
@@ -127,6 +129,31 @@ function diasSinEstudio() {
 }
 
 /* ---------- Criterios de salida (sección 9) ---------- */
+/* Racha de días consecutivos con Anki hecho (hacia atrás desde hoy). */
+function rachaAnki() {
+  let racha = 0;
+  let d = hoy();
+  for (let i = 0; i < 120; i++) {
+    const n = semanaDe(d);
+    if (n < 1 || n > 30) break;
+    const bl = bloquesDe(d).find((b) => b.tipo === 'anki');
+    if (!bl) { d = addDays(d, -1); continue; }
+    const hecho = minHecho(S.ses.get(clave(d, bl))) > 0;
+    if (hecho) { racha++; d = addDays(d, -1); continue; }
+    // Hoy sin Anki todavía no rompe la racha
+    if (i === 0 && iso(d) === iso(hoy())) { d = addDays(d, -1); continue; }
+    break;
+  }
+  return racha;
+}
+function tendenciaTxt(serie, invertida) {
+  if (!serie || serie.length < 2) return '';
+  const a = serie.at(-2), b = serie.at(-1);
+  if (a === b) return 'estable';
+  const mejor = invertida ? b < a : b > a;
+  return mejor ? 'mejorando' : 'bajando';
+}
+
 function criterios() {
   const ult = (t) => medsDe(t).at(-1);
   const lis = medsDe('listening'), ult3 = lis.slice(-3);
@@ -212,6 +239,20 @@ function vistaHoy() {
       <p><span>${laborable ? '17:00' : '0'}</span><span><b class="cifra">${hecho}</b> de ${plan} min</span><span>${laborable ? '18:15' : plan}</span></p>
     </div>`;
 
+  const ankiBl = bl.find((b) => b.tipo === 'anki');
+  const ankiOk = ankiBl ? minHecho(S.ses.get(clave(f, ankiBl))) > 0 : false;
+  const pendN = bl.filter((b) => {
+    const sx = S.ses.get(clave(f, b));
+    return !sx || sx.estado === 'pendiente';
+  }).length;
+  const racha = rachaAnki();
+  const partesHoy = [
+    `${pendN} pendiente${pendN === 1 ? '' : 's'}`,
+    ankiBl ? (ankiOk ? 'Anki hecho' : 'Anki pendiente') : null,
+    racha > 0 ? `racha Anki ${racha} día${racha === 1 ? '' : 's'}` : null,
+  ].filter(Boolean);
+  html += `<p class="resumen-hoy">${esc(partesHoy.join(' · '))}</p>`;
+
   if (!futuro && iso(f) === iso(t)) {
     const dse = diasSinEstudio();
     if (dse >= 3) html += alertaHTML(['rojo', `${dse} días seguidos sin estudiar: señal de fatiga (sección 12). Valora una descarga.`]);
@@ -262,9 +303,11 @@ function tiraHTML(f, b, futuro) {
   const min = est === 'parcial' ? `${s.minReal}<small>/${b.min}</small>` : est === 'saltada' ? '—' : est === 'hecha' ? s.minReal : b.min;
   const etq = { pendiente: 'min', hecha: 'hecho', parcial: 'parcial', saltada: 'saltada' }[est];
   const aria = { pendiente: 'pendiente', hecha: 'completada', parcial: 'parcial', saltada: 'saltada' }[est];
+  const det = detalleDe(b);
+  const notaTxt = s && s.nota ? (det ? det + ' · ' : '') + '📝 ' + s.nota : det;
   return `<li><button class="tira est-${est}${futuro ? ' futura' : ''}" style="--c:var(--sk-${b.sk})" data-b="${b.id}" aria-label="${esc(b.nombre)}, ${b.min} minutos, ${aria}">
     <span class="barra"></span><span class="cod">${CODIGO[b.sk]}</span>
-    <span class="txt"><span class="nombre">${esc(b.nombre)}</span><span class="detalle">${esc(detalleDe(b))}</span></span>
+    <span class="txt"><span class="nombre">${esc(b.nombre)}</span><span class="detalle">${esc(notaTxt)}</span></span>
     <span class="min"><small class="etq">${etq}</small><span class="cifra">${min}</span></span></button></li>`;
 }
 
@@ -429,11 +472,15 @@ function vistaRuta() {
 function vistaCriterios() {
   const { c, soporte, cumplidas } = criterios();
   const n = semanaActual();
-  const fila = (x) => `<article class="crit${x.estado === 'sin' ? ' apagada' : ''}" style="--c:var(--sk-${x.k || 'V'})">
+  const fila = (x) => {
+    const tend = tendenciaTxt(x.serie, x.invertida);
+    const tendHtml = tend ? `<span class="tend t-${tend}">${tend}</span>` : '';
+    return `<article class="crit${x.estado === 'sin' ? ' apagada' : ''}" style="--c:var(--sk-${x.k || 'V'})">
       <span class="barra"></span><span class="cod">${CODIGO[x.k || 'V']}</span>
-      <div class="crit-cuerpo"><header><h2>${esc(x.nombre)}</h2><span class="estado e-${x.estado}">${ESTADO_TXT[x.estado]}</span></header>
+      <div class="crit-cuerpo"><header><h2>${esc(x.nombre)}</h2><span class="estado e-${x.estado}">${ESTADO_TXT[x.estado]}</span>${tendHtml}</header>
       ${x.lineas.map((l) => `<p>${esc(l)}</p>`).join('')}
       ${sparkline(x.serie, x.umbral, x.invertida)}</div></article>`;
+  };
   let regla = '';
   if (n >= 24) regla = cumplidas === 4 ? 'Con 4 de 4 en S24 y S26: reserva en S27 y examen en S29.' : cumplidas === 3 ? 'Con 3 de 4: dos semanas de refuerzo en la destreza fallida, recomprobación en S28 y examen en S30.' : 'Con 2 de 4 o menos: aplazar a junio de 2027 con nueva reserva.';
   else if (n >= 20) {
@@ -477,7 +524,7 @@ function vistaDatos() {
     <h2 class="h2">Borrar todo</h2>
     <p class="ayuda">Elimina sesiones, mediciones y semáforos. No se puede deshacer.</p>
     <button class="boton peligro" data-acc="borrar-todo">Borrar todos los datos</button>
-    <p class="version">Versión 1.3, resumen global en Ruta. Plan v3.</p>`;
+    <p class="version">Versión 1.4 · notas, racha Anki, tendencias. Plan v3.</p>`;
 }
 
 /* ================= Hojas (formularios) ================= */
@@ -585,11 +632,13 @@ function hojaBloque(f, b) {
     <fieldset class="pills">${radio('hecha', 'Hecha')}${radio('parcial', 'Parcial')}${radio('saltada', 'Saltada')}${radio('pendiente', 'Pendiente')}</fieldset>
     <label class="campo"><span>Minutos reales</span><span class="paso"><button type="button" data-paso="-5" aria-label="Restar 5">−5</button>
       <input name="min" type="number" inputmode="numeric" min="0" max="300" value="${s ? s.minReal : b.min}"><button type="button" data-paso="5" aria-label="Sumar 5">+5</button></span></label>
+    <label class="campo"><span>Nota (opcional)</span><textarea name="nota" rows="2" placeholder="Qué me costó, error típico, repasar…">${esc(s && s.nota ? s.nota : '')}</textarea></label>
     ${form ? `<h3 class="h3">${form.titulo}</h3>${form.html(v)}` : ''}`}`,
   async (fm) => {
     if (futuro) return;
     const e = fm.estado.value;
-    await guardarSesion(f, b, e, Math.max(0, nv(fm.min) ?? b.min));
+    const nota = fm.nota ? fm.nota.value : '';
+    await guardarSesion(f, b, e, Math.max(0, nv(fm.min) ?? b.min), nota);
     if (form) {
       await guardarMediciones(key, f, e === 'pendiente' ? [] : form.leer(fm));
       if (form.semaforo && e !== 'pendiente') { const x = { semana: n, ...form.semaforo(fm) }; S.sem.set(n, x); await DB.poner('semaforos', x); }
