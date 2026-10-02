@@ -270,3 +270,8 @@ nav.tabs .datos { border-left: 1px solid var(--rail-borde); font-size: 16px; }
   *, *::before { transition-duration: 0s !important; animation: none !important; }
   .tira.cargando { outline: 3px solid var(--claro); }
 }
+/* Resumen global en Ruta */
+.sem-cab .sub-cab strong {
+  color: var(--claro);
+  font-weight: 700;
+}
