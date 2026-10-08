@@ -307,11 +307,12 @@ function vistaSemana() {
   const filas = seg.map((k) => {
     const p = r.por[k];
     const cuota = r.hecho ? Math.round((p.hecho / r.hecho) * 100) : 0;
-    const base = r.cerrada ? r.plan : r.planAFecha;
-    const basePor = r.cerrada ? p.plan : p.planHoy;
+    const enCurso = r.empezada && !r.cerrada;
+    const base = enCurso ? r.planAFecha : r.plan;
+    const basePor = enCurso ? p.planHoy : p.plan;
     const cuotaPlan = base ? Math.round((basePor / base) * 100) : 0;
     return `<div class="ficha-fila${p.hecho ? '' : ' apagada'}" style="--c:var(--sk-${k})"><span class="barra"></span><span class="cod">${CODIGO[k]}</span>
-      <span class="nom">${esc(DESTREZAS[k])}</span><span class="val cifra">${p.hecho}<small>/${r.cerrada ? p.plan : p.planHoy}</small></span><span class="val cifra">${cuota}<small>/${cuotaPlan} %</small></span></div>`;
+      <span class="nom">${esc(DESTREZAS[k])}</span><span class="val cifra">${p.hecho}<small>/${enCurso ? p.planHoy : p.plan}</small></span><span class="val cifra">${cuota}<small>/${cuotaPlan} %</small></span></div>`;
   }).join('');
   const ank = S.med.get(`anki:S${n}|anki`);
   const alertas = alertasSemana(n);
@@ -334,7 +335,7 @@ function vistaSemana() {
     <h2 class="h2 sin-margen">Reparto por destreza</h2>
     <div class="cab-fichas"><span></span><span>min</span><span>cuota</span></div>
     <div class="portafichas">${filas}</div>
-    <p class="ayuda">${r.cerrada ? 'Minutos y cuota, frente a lo previsto para la semana completa.' : 'Minutos y cuota, frente a lo previsto hasta hoy. Al cerrar la semana pasan a compararse con el total.'} Objetivo de la semana: ${r.por.L.plan} min de listening, ${r.por.S.plan} de speaking, ${r.por.V.plan} de vocab y gramática, ${r.por.R.plan} de reading${r.por.W.plan ? `, ${r.por.W.plan} de writing` : ''}.</p>
+    <p class="ayuda">${r.empezada && !r.cerrada ? 'Minutos y cuota, frente a lo previsto hasta hoy. Al cerrar la semana pasan a compararse con el total.' : 'Minutos y cuota, frente a lo previsto para la semana completa.'} Objetivo de la semana: ${r.por.L.plan} min de listening, ${r.por.S.plan} de speaking, ${r.por.V.plan} de vocab y gramática, ${r.por.R.plan} de reading${r.por.W.plan ? `, ${r.por.W.plan} de writing` : ''}.</p>
     <h2 class="h2">Retención de Anki</h2>
     <div class="en-linea"><label for="anki-ret">% de retención en las estadísticas de Anki</label>
       <input id="anki-ret" type="number" inputmode="numeric" min="0" max="100" value="${ank ? ank.valor : ''}" data-n="${n}"></div>
@@ -462,7 +463,7 @@ function vistaDatos() {
     <h2 class="h2">Borrar todo</h2>
     <p class="ayuda">Elimina sesiones, mediciones y semáforos. No se puede deshacer.</p>
     <button class="boton peligro" data-acc="borrar-todo">Borrar todos los datos</button>
-    <p class="version">Versión 1.4, diseño de fichas. Plan v3.1.</p>`;
+    <p class="version">Versión 1.5, diseño de fichas. Plan v3.1.</p>`;
 }
 
 /* ================= Hojas (formularios) ================= */
