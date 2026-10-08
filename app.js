@@ -39,18 +39,16 @@ async function setAjuste(k, v) {
 const clave = (f, b) => `${iso(f)}|${b.id}`;
 const minHecho = (s) => (s && (s.estado === 'hecha' || s.estado === 'parcial') ? s.minReal : 0);
 
-async function guardarSesion(f, b, estado, minReal, nota) {
+async function guardarSesion(f, b, estado, minReal) {
   const key = clave(f, b);
   if (estado === 'pendiente') { S.ses.delete(key); await DB.borrar('sesiones', key); return; }
   const s = { key, fecha: iso(f), semana: semanaDe(f), bloque: b.id, sk: b.sk, minPlan: b.min, minReal: estado === 'saltada' ? 0 : minReal, estado };
-  const n = (nota ?? '').trim();
-  if (n) s.nota = n;
   S.ses.set(key, s); await DB.poner('sesiones', s);
 }
 async function guardarMediciones(ref, fecha, lista) {
   for (const m of [...S.med.values()].filter((m) => m.ref === ref)) { S.med.delete(m.id); await DB.borrar('mediciones', m.id); }
   for (const m of lista) {
-    const x = { ...m, id: `${ref}|${m.tipo}`, ref, fecha: iso(fecha), semana: semanaDe(fecha) };
+    const x = { ...m, id: `${ref}|${m.tipo}${m.sub ? '#' + m.sub : ''}`, ref, fecha: iso(fecha), semana: semanaDe(fecha) };
     S.med.set(x.id, x); await DB.poner('mediciones', x);
   }
 }
@@ -60,14 +58,16 @@ const medsDe = (tipo) => [...S.med.values()].filter((m) => m.tipo === tipo).sort
 function resumen(n) {
   const ini = inicioSemana(n), t = hoy(), sem = getSem(n);
   const r = { n, sem, plan: 0, hecho: 0, planAFecha: 0, por: {}, dias: [], ankiDias: 0, speakingSes: 0, cerrada: t > addDays(ini, 6), empezada: t >= ini };
-  for (const k in DESTREZAS) r.por[k] = { plan: 0, hecho: 0 };
+  for (const k in DESTREZAS) r.por[k] = { plan: 0, planHoy: 0, hecho: 0 };
   for (let i = 0; i < 7; i++) {
     const f = addDays(ini, i);
     let p = 0, h = 0, anki = false;
+    const pasado = f <= t;
     for (const b of bloquesDe(f)) {
       const m = minHecho(S.ses.get(clave(f, b)));
       p += b.min; h += m;
       r.por[b.sk].plan += b.min; r.por[b.sk].hecho += m;
+      if (pasado) r.por[b.sk].planHoy += b.min;
       if (b.tipo === 'anki' && m > 0) anki = true;
       if (b.sk === 'S' && m > 0) r.speakingSes++;
     }
@@ -96,10 +96,11 @@ function alertasSemana(n) {
     if (findeCaido(r)) out.push(['ambar', 'Sábado y domingo sin hacer: la semana cuenta como incumplida.']);
     if (r.cerrada && r.ankiDias < 7) out.push(['ambar', `Anki: ${r.ankiDias} de 7 días. Anki va primero, siempre.`]);
     if (r.cerrada && r.por.S.hecho < r.por.S.plan) out.push(['ambar', `Speaking recortado: ${r.por.S.hecho} de ${r.por.S.plan} min. El speaking nunca se recorta.`]);
-    if (r.hecho >= 240) {
+    if (r.hecho >= 240 && r.planAFecha > 0) {
       for (const k of ['L', 'S', 'V', 'R', 'W']) {
-        const dev = (r.por[k].hecho / r.hecho - r.por[k].plan / r.plan) * 100;
-        if (Math.abs(dev) > 5) out.push(['ambar', `${DESTREZAS[k]}: ${Math.round(r.por[k].hecho / r.hecho * 100)} % del tiempo frente al ${Math.round(r.por[k].plan / r.plan * 100)} % previsto.`]);
+        const hizo = Math.round((r.por[k].hecho / r.hecho) * 100);
+        const toca = Math.round((r.por[k].planHoy / r.planAFecha) * 100);
+        if (Math.abs(hizo - toca) > 5) out.push(['ambar', `${DESTREZAS[k]}: ${hizo} % del tiempo frente al ${toca} % previsto a estas alturas de la semana.`]);
       }
     }
   }
@@ -129,31 +130,6 @@ function diasSinEstudio() {
 }
 
 /* ---------- Criterios de salida (sección 9) ---------- */
-/* Racha de días consecutivos con Anki hecho (hacia atrás desde hoy). */
-function rachaAnki() {
-  let racha = 0;
-  let d = hoy();
-  for (let i = 0; i < 120; i++) {
-    const n = semanaDe(d);
-    if (n < 1 || n > 30) break;
-    const bl = bloquesDe(d).find((b) => b.tipo === 'anki');
-    if (!bl) { d = addDays(d, -1); continue; }
-    const hecho = minHecho(S.ses.get(clave(d, bl))) > 0;
-    if (hecho) { racha++; d = addDays(d, -1); continue; }
-    // Hoy sin Anki todavía no rompe la racha
-    if (i === 0 && iso(d) === iso(hoy())) { d = addDays(d, -1); continue; }
-    break;
-  }
-  return racha;
-}
-function tendenciaTxt(serie, invertida) {
-  if (!serie || serie.length < 2) return '';
-  const a = serie.at(-2), b = serie.at(-1);
-  if (a === b) return 'estable';
-  const mejor = invertida ? b < a : b > a;
-  return mejor ? 'mejorando' : 'bajando';
-}
-
 function criterios() {
   const ult = (t) => medsDe(t).at(-1);
   const lis = medsDe('listening'), ult3 = lis.slice(-3);
@@ -239,20 +215,6 @@ function vistaHoy() {
       <p><span>${laborable ? '17:00' : '0'}</span><span><b class="cifra">${hecho}</b> de ${plan} min</span><span>${laborable ? '18:15' : plan}</span></p>
     </div>`;
 
-  const ankiBl = bl.find((b) => b.tipo === 'anki');
-  const ankiOk = ankiBl ? minHecho(S.ses.get(clave(f, ankiBl))) > 0 : false;
-  const pendN = bl.filter((b) => {
-    const sx = S.ses.get(clave(f, b));
-    return !sx || sx.estado === 'pendiente';
-  }).length;
-  const racha = rachaAnki();
-  const partesHoy = [
-    `${pendN} pendiente${pendN === 1 ? '' : 's'}`,
-    ankiBl ? (ankiOk ? 'Anki hecho' : 'Anki pendiente') : null,
-    racha > 0 ? `racha Anki ${racha} día${racha === 1 ? '' : 's'}` : null,
-  ].filter(Boolean);
-  html += `<p class="resumen-hoy">${esc(partesHoy.join(' · '))}</p>`;
-
   if (!futuro && iso(f) === iso(t)) {
     const dse = diasSinEstudio();
     if (dse >= 3) html += alertaHTML(['rojo', `${dse} días seguidos sin estudiar: señal de fatiga (sección 12). Valora una descarga.`]);
@@ -303,11 +265,9 @@ function tiraHTML(f, b, futuro) {
   const min = est === 'parcial' ? `${s.minReal}<small>/${b.min}</small>` : est === 'saltada' ? '—' : est === 'hecha' ? s.minReal : b.min;
   const etq = { pendiente: 'min', hecha: 'hecho', parcial: 'parcial', saltada: 'saltada' }[est];
   const aria = { pendiente: 'pendiente', hecha: 'completada', parcial: 'parcial', saltada: 'saltada' }[est];
-  const det = detalleDe(b);
-  const notaTxt = s && s.nota ? (det ? det + ' · ' : '') + '📝 ' + s.nota : det;
   return `<li><button class="tira est-${est}${futuro ? ' futura' : ''}" style="--c:var(--sk-${b.sk})" data-b="${b.id}" aria-label="${esc(b.nombre)}, ${b.min} minutos, ${aria}">
     <span class="barra"></span><span class="cod">${CODIGO[b.sk]}</span>
-    <span class="txt"><span class="nombre">${esc(b.nombre)}</span><span class="detalle">${esc(notaTxt)}</span></span>
+    <span class="txt"><span class="nombre">${esc(b.nombre)}</span><span class="detalle">${esc(detalleDe(b))}</span></span>
     <span class="min"><small class="etq">${etq}</small><span class="cifra">${min}</span></span></button></li>`;
 }
 
@@ -347,9 +307,11 @@ function vistaSemana() {
   const filas = seg.map((k) => {
     const p = r.por[k];
     const cuota = r.hecho ? Math.round((p.hecho / r.hecho) * 100) : 0;
-    const cuotaPlan = r.plan ? Math.round((p.plan / r.plan) * 100) : 0;
+    const base = r.cerrada ? r.plan : r.planAFecha;
+    const basePor = r.cerrada ? p.plan : p.planHoy;
+    const cuotaPlan = base ? Math.round((basePor / base) * 100) : 0;
     return `<div class="ficha-fila${p.hecho ? '' : ' apagada'}" style="--c:var(--sk-${k})"><span class="barra"></span><span class="cod">${CODIGO[k]}</span>
-      <span class="nom">${esc(DESTREZAS[k])}</span><span class="val cifra">${p.hecho}<small>/${p.plan}</small></span><span class="val cifra">${cuota}<small>/${cuotaPlan} %</small></span></div>`;
+      <span class="nom">${esc(DESTREZAS[k])}</span><span class="val cifra">${p.hecho}<small>/${r.cerrada ? p.plan : p.planHoy}</small></span><span class="val cifra">${cuota}<small>/${cuotaPlan} %</small></span></div>`;
   }).join('');
   const ank = S.med.get(`anki:S${n}|anki`);
   const alertas = alertasSemana(n);
@@ -372,7 +334,7 @@ function vistaSemana() {
     <h2 class="h2 sin-margen">Reparto por destreza</h2>
     <div class="cab-fichas"><span></span><span>min</span><span>cuota</span></div>
     <div class="portafichas">${filas}</div>
-    <p class="ayuda">Cuota: porcentaje del tiempo hecho frente al previsto por el plan para esta semana.</p>
+    <p class="ayuda">${r.cerrada ? 'Minutos y cuota, frente a lo previsto para la semana completa.' : 'Minutos y cuota, frente a lo previsto hasta hoy. Al cerrar la semana pasan a compararse con el total.'} Objetivo de la semana: ${r.por.L.plan} min de listening, ${r.por.S.plan} de speaking, ${r.por.V.plan} de vocab y gramática, ${r.por.R.plan} de reading${r.por.W.plan ? `, ${r.por.W.plan} de writing` : ''}.</p>
     <h2 class="h2">Retención de Anki</h2>
     <div class="en-linea"><label for="anki-ret">% de retención en las estadísticas de Anki</label>
       <input id="anki-ret" type="number" inputmode="numeric" min="0" max="100" value="${ank ? ank.valor : ''}" data-n="${n}"></div>
@@ -415,14 +377,6 @@ function vistaRuta() {
   const resumenes = SEMANAS.map((s) => resumen(s.n));
   const cerradas = resumenes.filter((r) => r.cerrada && esNormal(r.n));
   const media = cerradas.length ? fmtH(cerradas.reduce((a, r) => a + r.hecho, 0) / cerradas.length) : null;
-
-  // Resumen global
-  const totalHecho = resumenes.reduce((a, r) => a + r.hecho, 0);
-  const totalPlan  = resumenes.reduce((a, r) => a + r.plan, 0);
-  const pct        = totalPlan > 0 ? Math.round((totalHecho / totalPlan) * 100) : 0;
-  const planAFecha = resumenes.reduce((a, r) => a + r.planAFecha, 0);
-  const pctFecha   = planAFecha > 0 ? Math.round((totalHecho / planAFecha) * 100) : 0;
-
   const cab = SEMANAS.map((s) => `<th scope="col" class="${s.n === act ? 'act' : ''}">${s.n}</th>`).join('');
   const marcas = SEMANAS.map((s) => `<td class="mk">${s.examen ? '●' : s.puerta ? '▲' : s.diag ? '◆' : s.comprob ? '△' : ''}</td>`).join('');
   const filas = DIAS.map((d, i) => `<tr><th scope="row">${d}</th>${resumenes.map((r) => {
@@ -445,20 +399,8 @@ function vistaRuta() {
   }).join('');
   const y9 = H - (540 / max) * (H - 14);
 
-  const subGlobal = totalHecho > 0 || act >= 1
-    ? `<strong>${fmtH(totalHecho)} h</strong> hechas · <strong>${pct} %</strong> del plan`
-      + (media ? ` · media cerradas: ${media} h` : '')
-    : 'Todavía no hay semanas cerradas.';
-
-  const lineaFecha = (act >= 1 && planAFecha > 0)
-    ? `<p class="ayuda">Respecto a lo previsto hasta hoy: ${pctFecha} %.</p>`
-    : '';
-
-  return `<section class="cabecera sem-cab">
-      <p class="grande cifra">${act < 1 ? 'S0' : `S${act}`}<span class="de"> de 30</span></p>
-      <p class="sub-cab">${subGlobal}</p>
-      ${lineaFecha}
-    </section>
+  return `<section class="cabecera sem-cab"><p class="grande cifra">${act < 1 ? 'S0' : `S${act}`}<span class="de"> de 30</span></p>
+      <p class="sub-cab">${media ? `Media de las semanas normales cerradas: ${media} h.` : 'Todavía no hay semanas cerradas.'}</p></section>
     <div class="rejilla-scroll"><table class="rejilla"><thead><tr><th></th>${cab}</tr><tr><th></th>${marcas}</tr></thead><tbody>${filas}</tbody></table></div>
     <p class="leyenda-r"><span><i class="c n3"></i>Completo</span><span><i class="c n2"></i>Parcial</span><span><i class="c n0"></i>Sin hacer</span><span><i class="c desc"></i>Descarga</span></p>
     <p class="leyenda-r"><span>◆ Mini-diagnóstico</span><span>△ Comprobación</span><span>▲ Puerta</span><span>● Examen</span></p>
@@ -472,15 +414,11 @@ function vistaRuta() {
 function vistaCriterios() {
   const { c, soporte, cumplidas } = criterios();
   const n = semanaActual();
-  const fila = (x) => {
-    const tend = tendenciaTxt(x.serie, x.invertida);
-    const tendHtml = tend ? `<span class="tend t-${tend}">${tend}</span>` : '';
-    return `<article class="crit${x.estado === 'sin' ? ' apagada' : ''}" style="--c:var(--sk-${x.k || 'V'})">
+  const fila = (x) => `<article class="crit${x.estado === 'sin' ? ' apagada' : ''}" style="--c:var(--sk-${x.k || 'V'})">
       <span class="barra"></span><span class="cod">${CODIGO[x.k || 'V']}</span>
-      <div class="crit-cuerpo"><header><h2>${esc(x.nombre)}</h2><span class="estado e-${x.estado}">${ESTADO_TXT[x.estado]}</span>${tendHtml}</header>
+      <div class="crit-cuerpo"><header><h2>${esc(x.nombre)}</h2><span class="estado e-${x.estado}">${ESTADO_TXT[x.estado]}</span></header>
       ${x.lineas.map((l) => `<p>${esc(l)}</p>`).join('')}
       ${sparkline(x.serie, x.umbral, x.invertida)}</div></article>`;
-  };
   let regla = '';
   if (n >= 24) regla = cumplidas === 4 ? 'Con 4 de 4 en S24 y S26: reserva en S27 y examen en S29.' : cumplidas === 3 ? 'Con 3 de 4: dos semanas de refuerzo en la destreza fallida, recomprobación en S28 y examen en S30.' : 'Con 2 de 4 o menos: aplazar a junio de 2027 con nueva reserva.';
   else if (n >= 20) {
@@ -524,7 +462,7 @@ function vistaDatos() {
     <h2 class="h2">Borrar todo</h2>
     <p class="ayuda">Elimina sesiones, mediciones y semáforos. No se puede deshacer.</p>
     <button class="boton peligro" data-acc="borrar-todo">Borrar todos los datos</button>
-    <p class="version">Versión 1.4 · notas, racha Anki, tendencias. Plan v3.</p>`;
+    <p class="version">Versión 1.4, diseño de fichas. Plan v3.1.</p>`;
 }
 
 /* ================= Hojas (formularios) ================= */
@@ -538,9 +476,21 @@ const semSel = (name, label, v) => `<label class="campo"><span>${label}</span><s
 const FORMS = {
   listening: {
     titulo: 'Listening',
-    cargar: (ms) => { const m = ms.find((x) => x.tipo === 'listening'); return m ? { pct: m.valor, ...m.extra } : {}; },
-    html: (v) => num('pct', '% en primera escucha', v.pct, 0, 100) + txt('episodio', 'Episodio o fuente', v.episodio) + area('palabras', 'Palabras nuevas con contexto, 3 a 5', v.palabras),
-    leer: (f) => { const p = nv(f.pct); return p === null ? [] : [{ tipo: 'listening', valor: p, extra: { episodio: f.episodio.value.trim(), palabras: f.palabras.value.trim() } }]; },
+    cargar: (ms) => {
+      const l = ms.filter((x) => x.tipo === 'listening').sort((a, b) => a.id.localeCompare(b.id));
+      const v = l[0] ? { pct: l[0].valor, ...l[0].extra } : {};
+      if (l[1]) { v.pct2 = l[1].valor; v.episodio2 = l[1].extra.episodio; v.palabras2 = l[1].extra.palabras; }
+      return v;
+    },
+    html: (v) => num('pct', '% en primera escucha', v.pct, 0, 100) + txt('episodio', 'Episodio o fuente', v.episodio) + area('palabras', 'Palabras nuevas con contexto, 3 a 5', v.palabras)
+      + `<details class="segundo"${v.pct2 !== undefined ? ' open' : ''}><summary>Segundo episodio del mismo bloque</summary>
+        ${num('pct2', '% en primera escucha', v.pct2, 0, 100)}${txt('episodio2', 'Episodio o fuente', v.episodio2)}${area('palabras2', 'Palabras nuevas con contexto, 3 a 5', v.palabras2)}</details>`,
+    leer: (f) => {
+      const out = [], p = nv(f.pct), p2 = nv(f.pct2);
+      if (p !== null) out.push({ tipo: 'listening', valor: p, extra: { episodio: f.episodio.value.trim(), palabras: f.palabras.value.trim() } });
+      if (p2 !== null) out.push({ tipo: 'listening', sub: '2', valor: p2, extra: { episodio: f.episodio2.value.trim(), palabras: f.palabras2.value.trim() } });
+      return out;
+    },
   },
   murphy: {
     titulo: 'Murphy',
@@ -632,13 +582,11 @@ function hojaBloque(f, b) {
     <fieldset class="pills">${radio('hecha', 'Hecha')}${radio('parcial', 'Parcial')}${radio('saltada', 'Saltada')}${radio('pendiente', 'Pendiente')}</fieldset>
     <label class="campo"><span>Minutos reales</span><span class="paso"><button type="button" data-paso="-5" aria-label="Restar 5">−5</button>
       <input name="min" type="number" inputmode="numeric" min="0" max="300" value="${s ? s.minReal : b.min}"><button type="button" data-paso="5" aria-label="Sumar 5">+5</button></span></label>
-    <label class="campo"><span>Nota (opcional)</span><textarea name="nota" rows="2" placeholder="Qué me costó, error típico, repasar…">${esc(s && s.nota ? s.nota : '')}</textarea></label>
     ${form ? `<h3 class="h3">${form.titulo}</h3>${form.html(v)}` : ''}`}`,
   async (fm) => {
     if (futuro) return;
     const e = fm.estado.value;
-    const nota = fm.nota ? fm.nota.value : '';
-    await guardarSesion(f, b, e, Math.max(0, nv(fm.min) ?? b.min), nota);
+    await guardarSesion(f, b, e, Math.max(0, nv(fm.min) ?? b.min));
     if (form) {
       await guardarMediciones(key, f, e === 'pendiente' ? [] : form.leer(fm));
       if (form.semaforo && e !== 'pendiente') { const x = { semana: n, ...form.semaforo(fm) }; S.sem.set(n, x); await DB.poner('semaforos', x); }
