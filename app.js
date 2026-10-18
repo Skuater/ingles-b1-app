@@ -39,10 +39,14 @@ async function setAjuste(k, v) {
 const clave = (f, b) => `${iso(f)}|${b.id}`;
 const minHecho = (s) => (s && (s.estado === 'hecha' || s.estado === 'parcial') ? s.minReal : 0);
 
-async function guardarSesion(f, b, estado, minReal) {
+/* nota: undefined = conservar la que hubiera; '' = borrarla */
+async function guardarSesion(f, b, estado, minReal, nota) {
   const key = clave(f, b);
+  const previa = S.ses.get(key);
   if (estado === 'pendiente') { S.ses.delete(key); await DB.borrar('sesiones', key); return; }
   const s = { key, fecha: iso(f), semana: semanaDe(f), bloque: b.id, sk: b.sk, minPlan: b.min, minReal: estado === 'saltada' ? 0 : minReal, estado };
+  const n = (nota === undefined ? (previa && previa.nota) || '' : nota).trim();
+  if (n) s.nota = n;
   S.ses.set(key, s); await DB.poner('sesiones', s);
 }
 async function guardarMediciones(ref, fecha, lista) {
@@ -108,11 +112,11 @@ function alertasSemana(n) {
     out.push(['ambar', `Murphy U${m.extra.unidad || '?'} al ${m.valor} %: repetir la explicación y hacerla el sábado.`]);
   }
   if (n === 9 && r.cerrada) {
-    const l = medsDe('listening').filter((m) => m.semana === 9);
-    const media = l.length ? l.reduce((a, m) => a + m.valor, 0) / l.length : null;
-    if (media !== null) out.push([media > 50 ? 'verde' : 'info', media > 50
-      ? `Listening medio de S9 al ${Math.round(media)} %: la salida anticipada es realista.`
-      : `Listening medio de S9 al ${Math.round(media)} %: por ahora, examen en S29.`]);
+    const l = lisObjetivas().filter((m) => m.semana === 9);
+    const dist = l.length ? Math.round(l.reduce((a, m) => a + (m.valor - UMBRAL_L[m.extra.metodo]), 0) / l.length) : null;
+    if (dist !== null) out.push([dist >= -10 ? 'verde' : 'info', dist >= -10
+      ? `Listening de S9 a ${Math.abs(dist)} puntos del umbral de la puerta: la salida anticipada es realista.`
+      : `Listening de S9 a ${Math.abs(dist)} puntos del umbral de la puerta: por ahora, examen en S29.`]);
   }
   const sems = [...S.sem.values()].filter((x) => x.semana > 0 && x.semana <= n).sort((a, b) => a.semana - b.semana);
   if (sems.length >= 2 && sems.at(-1).S === 'rojo' && sems.at(-2).S === 'rojo') out.push(['rojo', 'Speaking en rojo en dos mini-diagnósticos seguidos: pasar de IA a Tandem/HelloTalk.']);
@@ -129,13 +133,49 @@ function diasSinEstudio() {
   return c;
 }
 
+/* Racha de días seguidos con Anki hecho, hacia atrás desde hoy.
+   Hoy sin Anki todavía no rompe la racha. */
+function rachaAnki() {
+  let racha = 0, d = hoy();
+  for (let i = 0; i < 400; i++) {
+    const n = semanaDe(d);
+    if (n < 1 || n > 30) break;
+    const bl = bloquesDe(d).find((b) => b.tipo === 'anki');
+    if (!bl) { d = addDays(d, -1); continue; }
+    if (minHecho(S.ses.get(clave(d, bl))) > 0) { racha++; d = addDays(d, -1); continue; }
+    if (i === 0) { d = addDays(d, -1); continue; }
+    break;
+  }
+  return racha;
+}
+function tendenciaTxt(serie, invertida) {
+  if (!serie || serie.length < 2) return '';
+  const a = serie.at(-2), b = serie.at(-1);
+  if (a === b) return 'estable';
+  return (invertida ? b < a : b > a) ? 'mejorando' : 'bajando';
+}
+
+/* ---------- Medición objetiva del listening (plan v3.2) ----------
+   Solo cuentan para la puerta los episodios de 6 Minute English (o del mini-diagnóstico)
+   medidos con dictado o con preguntas. La estimación se guarda, pero no cuenta. */
+const UMBRAL_L = { dictado: 80, preguntas: 70 };
+const FUENTES_L = [['6ME', '6 Minute English'], ['BBC', 'Otro programa de BBC Learning English'], ['LR', 'Language Reactor'], ['diag', 'Mini-diagnóstico (6 Minute English)'], ['otro', 'Otra fuente']];
+const METODOS_L = [['dictado', 'Dictado de 3 frases: palabras bien escritas'], ['preguntas', 'Preguntas de comprensión acertadas'], ['estimacion', 'Estimación a ojo (no cuenta para la puerta)']];
+const FUENTE_BLOQUE = { '6me': '6ME', lis: '6ME', largo: '6ME', esc: '6ME', bbc: 'BBC', lr: 'LR', pasivo: 'otro' };
+const esObjetiva = (m) => m.extra && UMBRAL_L[m.extra.metodo] !== undefined && ['6ME', 'diag'].includes(m.extra.fuente);
+const lisObjetivas = () => medsDe('listening').filter(esObjetiva);
+const okL = (m, margen = 0) => m.valor >= UMBRAL_L[m.extra.metodo] - margen;
+const noMuestra = (m) => !(m.extra && m.extra.muestra);
+const ultSim = (t) => medsDe(t).filter(noMuestra).at(-1);
+
 /* ---------- Criterios de salida (sección 9) ---------- */
 function criterios() {
   const ult = (t) => medsDe(t).at(-1);
-  const lis = medsDe('listening'), ult3 = lis.slice(-3);
-  const racha = ult3.length === 3 && ult3.every((m) => m.valor >= 70);
-  const sL = ult('sim_L'), sR = ult('sim_R');
-  const sp = ult('speaking'), wr = ult('writing');
+  const lis = lisObjetivas(), ult3 = lis.slice(-3);
+  const racha = ult3.length === 3 && ult3.every((m) => okL(m));
+  const sL = ultSim('sim_L'), sR = ultSim('sim_R');
+  const sp = ult('speaking');
+  const wr = medsDe('writing').filter((m) => m.extra.tarea === 'examen').at(-1);
   const mur = medsDe('murphy').slice(-5), ank = ult('anki');
   const murMedia = mur.length ? Math.round(mur.reduce((a, m) => a + m.valor, 0) / mur.length) : null;
   const est = (hay, ok) => (!hay ? 'sin' : ok ? 'ok' : 'no');
@@ -143,20 +183,20 @@ function criterios() {
   const c = [
     { k: 'L', nombre: 'Listening', estado: est(lis.length || sL, racha && sL && sL.valor >= 65),
       lineas: [
-        ult3.length ? `Últimos episodios: ${ult3.map((m) => m.valor).join(', ')} %. Hacen falta 3 seguidos en 70 o más.` : 'Sin episodios medidos. Hacen falta 3 seguidos en 70 % o más.',
+        ult3.length ? `Últimos episodios medidos de 6 Minute English: ${ult3.map((m) => `${m.valor} % (${m.extra.metodo})`).join(', ')}. Hacen falta 3 seguidos: 80 % en dictado o 70 % en preguntas.` : 'Sin episodios de 6 Minute English medidos con dictado o preguntas. Hacen falta 3 seguidos: 80 % en dictado o 70 % en preguntas.',
         sL ? `Simulacro: ${sL.valor} %. Mínimo 65.` : 'Simulacro: se mide desde S20. Mínimo 65 %.'],
       serie: lis.map((m) => m.valor), umbral: 70 },
     { k: 'R', nombre: 'Reading', estado: est(sR, sR && sR.valor >= 65 && sR.extra.enTiempo),
       lineas: [sR ? `Simulacro: ${sR.valor} %${sR.extra.enTiempo ? ', dentro del tiempo' : ', fuera de tiempo'}. Mínimo 65 dentro del tiempo.` : 'Se mide en el simulacro desde S20. Mínimo 65 % dentro del tiempo.'],
       serie: medsDe('sim_R').map((m) => m.valor), umbral: 65 },
-    { k: 'S', nombre: 'Speaking', estado: est(sp, sp && sp.valor >= 120 && sp.extra.pausas === 0 && sp.extra.errores <= 3),
-      lineas: [sp ? `Última grabación: ${Math.floor(sp.valor / 60)} min ${sp.valor % 60} s, ${sp.extra.pausas} pausas de más de 5 s, ${sp.extra.errores} errores graves.` : 'Sin grabaciones medidas.',
-        'Criterio: 2-3 min sin preparar, ninguna pausa de más de 5 s, 3 errores graves como máximo.'],
+    { k: 'S', nombre: 'Speaking', estado: est(sp, sp && sp.valor >= 90 && sp.extra.pausas === 0 && sp.extra.errores <= 3 && sp.extra.sitTotal >= 3 && sp.extra.sitOk === sp.extra.sitTotal),
+      lineas: [sp ? `Última grabación: ${Math.floor(sp.valor / 60)} min ${sp.valor % 60} s, ${sp.extra.pausas} pausas de más de 5 s, ${sp.extra.errores} errores graves${sp.extra.sitTotal ? `, ${sp.extra.sitOk} de ${sp.extra.sitTotal} situaciones de rol resueltas` : ', sin situaciones de rol'}.` : 'Sin grabaciones medidas.',
+        'Criterio (formato del examen): parte 4 con 30 s de preparación y 1,5 min sin pausas de más de 5 s, 3 de 3 situaciones de rol resueltas y 3 errores graves como máximo.'],
       serie: medsDe('speaking').map((m) => m.extra.errores), umbral: 3, invertida: true },
-    { k: 'W', nombre: 'Writing', estado: est(wr, wr && wr.valor >= 100 && wr.valor <= 150 && wr.extra.minutos <= 30 && wr.extra.conectores >= 4 && wr.extra.errores <= 5),
-      lineas: [wr ? `Último texto: ${wr.valor} palabras en ${wr.extra.minutos} min, ${wr.extra.conectores} conectores, ${wr.extra.errores} errores.` : 'Sin textos medidos. Los textos empiezan en S10.',
-        'Criterio: 100-150 palabras en 30 min o menos, 4 conectores distintos, 5 errores gramaticales como máximo.'],
-      serie: medsDe('writing').map((m) => m.extra.errores), umbral: 5, invertida: true },
+    { k: 'W', nombre: 'Writing', estado: est(wr, wr && wr.valor >= 70 && wr.valor <= 100 && wr.extra.palabras2 >= 100 && wr.extra.palabras2 <= 120 && wr.extra.minutos <= 45 && wr.extra.conectores >= 4 && wr.extra.errores <= 5 && wr.extra.errores2 <= 5),
+      lineas: [wr ? `Último examen completo: formal ${wr.valor} palabras (${wr.extra.errores} errores) e informal ${wr.extra.palabras2 ?? '?'} palabras (${wr.extra.errores2 ?? '?'} errores), en ${wr.extra.minutos} min, ${wr.extra.conectores} conectores.` : 'Sin las 2 tareas del examen medidas juntas. Se practican desde S17.',
+        'Criterio (formato del examen): formal de 70-100 palabras e informal de 100-120, las 2 en 45 min o menos, 4 conectores distintos y 5 errores como máximo en cada una.'],
+      serie: medsDe('writing').filter((m) => m.extra.tarea === 'examen').map((m) => Math.max(m.extra.errores, m.extra.errores2 ?? 0)), umbral: 5, invertida: true },
   ];
   const soporte = { nombre: 'Soporte de vocabulario y gramática', estado: est(murMedia !== null || ank, murMedia !== null && murMedia >= 80 && ank && ank.valor >= 85),
     lineas: [murMedia !== null ? `Murphy, media de las últimas ${mur.length} unidades: ${murMedia} %. Mínimo 80.` : 'Murphy: sin unidades medidas. Mínimo 80 %.',
@@ -215,6 +255,15 @@ function vistaHoy() {
       <p><span>${laborable ? '17:00' : '0'}</span><span><b class="cifra">${hecho}</b> de ${plan} min</span><span>${laborable ? '18:15' : plan}</span></p>
     </div>`;
 
+  const ankiBl = bl.find((b) => b.tipo === 'anki');
+  const ankiOk = ankiBl ? minHecho(S.ses.get(clave(f, ankiBl))) > 0 : false;
+  const pendN = bl.filter((b) => !S.ses.get(clave(f, b))).length;
+  const racha = rachaAnki();
+  const partesHoy = [`${pendN} pendiente${pendN === 1 ? '' : 's'}`,
+    ankiBl ? (ankiOk ? 'Anki hecho' : 'Anki pendiente') : null,
+    racha > 0 ? `racha Anki ${racha} día${racha === 1 ? '' : 's'}` : null].filter(Boolean);
+  html += `<p class="resumen-hoy">${esc(partesHoy.join(' · '))}</p>`;
+
   if (!futuro && iso(f) === iso(t)) {
     const dse = diasSinEstudio();
     if (dse >= 3) html += alertaHTML(['rojo', `${dse} días seguidos sin estudiar: señal de fatiga (sección 12). Valora una descarga.`]);
@@ -267,7 +316,7 @@ function tiraHTML(f, b, futuro) {
   const aria = { pendiente: 'pendiente', hecha: 'completada', parcial: 'parcial', saltada: 'saltada' }[est];
   return `<li><button class="tira est-${est}${futuro ? ' futura' : ''}" style="--c:var(--sk-${b.sk})" data-b="${b.id}" aria-label="${esc(b.nombre)}, ${b.min} minutos, ${aria}">
     <span class="barra"></span><span class="cod">${CODIGO[b.sk]}</span>
-    <span class="txt"><span class="nombre">${esc(b.nombre)}</span><span class="detalle">${esc(detalleDe(b))}</span></span>
+    <span class="txt"><span class="nombre">${esc(b.nombre)}</span><span class="detalle">${esc(s && s.nota ? [detalleDe(b), '📝 ' + s.nota].filter(Boolean).join(' · ') : detalleDe(b))}</span></span>
     <span class="min"><small class="etq">${etq}</small><span class="cifra">${min}</span></span></button></li>`;
 }
 
@@ -347,7 +396,8 @@ function filaRegistro(n) {
   const r = resumen(n), s = r.sem;
   const lis = medsDe('listening').filter((m) => m.semana === n);
   const mur = medsDe('murphy').filter((m) => m.semana === n);
-  const media = lis.length ? `${Math.round(lis.reduce((a, m) => a + m.valor, 0) / lis.length)} %` : '';
+  const lisO = lis.filter(esObjetiva);
+  const media = lisO.length ? `${Math.round(lisO.reduce((a, m) => a + m.valor, 0) / lisO.length)} % medido` : lis.length ? `${Math.round(lis.reduce((a, m) => a + m.valor, 0) / lis.length)} % est.` : '';
   const esc0 = bloquesDe(addDays(inicioSemana(n), 5)).find((b) => b.id === 'esc');
   const escHecho = esc0 && minHecho(S.ses.get(clave(addDays(inicioSemana(n), 5), esc0))) > 0;
   const pw = s.tipo ? '—' : n >= 22 ? 'Simulacro' : `${esc0 ? esc0.nombre : ''}${escHecho ? ' ✓' : ' pendiente'}`;
@@ -355,11 +405,16 @@ function filaRegistro(n) {
   const out = [`| S${n} | ${fmtH(r.hecho)} | ${r.ankiDias}/7 | ${mur.map((m) => `U${m.extra.unidad || '?'} (${m.valor} %)`).join(', ')} | ${media} | ${r.speakingSes} | ${pw} | ${notas} |`];
   if (lis.length) {
     out.push('', '<!-- Sección 3 · Listening -->');
-    lis.forEach((m) => out.push(`| ${fmtCorta(parseISO(m.fecha))} | ${m.extra.episodio || ''} | ${m.valor} % | ${(m.extra.palabras || '').replace(/\n/g, '; ')} |`));
+    lis.forEach((m) => out.push(`| ${fmtCorta(parseISO(m.fecha))} | ${m.extra.episodio || ''} | ${m.valor} % (${m.extra.metodo || 'estimacion'}${m.extra.total ? ` ${m.extra.aciertos}/${m.extra.total}` : ''}) | ${(m.extra.palabras || '').replace(/\n/g, '; ')} |`));
   }
   if (mur.length) {
     out.push('', '<!-- Sección 4 · Murphy -->');
     mur.forEach((m) => out.push(`| U${m.extra.unidad || '?'} | ${fmtCorta(parseISO(m.fecha))} | ${m.valor} % | ${m.valor >= 90 ? 'cerrada' : m.valor < 70 ? 'repetir / sábado' : 'no cerrada'} |`));
+  }
+  const notasSes = [...S.ses.values()].filter((x) => x.semana === n && x.nota).sort((a, b) => a.key.localeCompare(b.key));
+  if (notasSes.length) {
+    out.push('', '<!-- Notas de las sesiones -->');
+    notasSes.forEach((x) => { const bx = bloquesDe(parseISO(x.fecha)).find((b) => b.id === x.bloque); out.push(`| ${fmtCorta(parseISO(x.fecha))} | ${bx ? bx.nombre : x.bloque} | ${x.nota.replace(/\n/g, ' ')} |`); });
   }
   const sm = S.sem.get(n);
   if (sm && s.diag) {
@@ -378,6 +433,11 @@ function vistaRuta() {
   const resumenes = SEMANAS.map((s) => resumen(s.n));
   const cerradas = resumenes.filter((r) => r.cerrada && esNormal(r.n));
   const media = cerradas.length ? fmtH(cerradas.reduce((a, r) => a + r.hecho, 0) / cerradas.length) : null;
+  const totalHecho = resumenes.reduce((a, r) => a + r.hecho, 0);
+  const totalPlan = resumenes.reduce((a, r) => a + r.plan, 0);
+  const planAFecha = resumenes.reduce((a, r) => a + r.planAFecha, 0);
+  const pct = totalPlan ? Math.round((totalHecho / totalPlan) * 100) : 0;
+  const pctFecha = planAFecha ? Math.round((totalHecho / planAFecha) * 100) : 0;
   const cab = SEMANAS.map((s) => `<th scope="col" class="${s.n === act ? 'act' : ''}">${s.n}</th>`).join('');
   const marcas = SEMANAS.map((s) => `<td class="mk">${s.examen ? '●' : s.puerta ? '▲' : s.diag ? '◆' : s.comprob ? '△' : ''}</td>`).join('');
   const filas = DIAS.map((d, i) => `<tr><th scope="row">${d}</th>${resumenes.map((r) => {
@@ -401,7 +461,8 @@ function vistaRuta() {
   const y9 = H - (540 / max) * (H - 14);
 
   return `<section class="cabecera sem-cab"><p class="grande cifra">${act < 1 ? 'S0' : `S${act}`}<span class="de"> de 30</span></p>
-      <p class="sub-cab">${media ? `Media de las semanas normales cerradas: ${media} h.` : 'Todavía no hay semanas cerradas.'}</p></section>
+      <p class="sub-cab">${totalHecho > 0 ? `<strong>${fmtH(totalHecho)} h</strong> hechas · <strong>${pct} %</strong> del plan${media ? ` · media de las semanas cerradas: ${media} h` : ''}` : 'Todavía no hay horas registradas.'}</p>
+      ${act >= 1 && planAFecha ? `<p class="ayuda">Respecto a lo previsto hasta hoy: ${pctFecha} %.</p>` : ''}</section>
     <div class="rejilla-scroll"><table class="rejilla"><thead><tr><th></th>${cab}</tr><tr><th></th>${marcas}</tr></thead><tbody>${filas}</tbody></table></div>
     <p class="leyenda-r"><span><i class="c n3"></i>Completo</span><span><i class="c n2"></i>Parcial</span><span><i class="c n0"></i>Sin hacer</span><span><i class="c desc"></i>Descarga</span></p>
     <p class="leyenda-r"><span>◆ Mini-diagnóstico</span><span>△ Comprobación</span><span>▲ Puerta</span><span>● Examen</span></p>
@@ -417,16 +478,16 @@ function vistaCriterios() {
   const n = semanaActual();
   const fila = (x) => `<article class="crit${x.estado === 'sin' ? ' apagada' : ''}" style="--c:var(--sk-${x.k || 'V'})">
       <span class="barra"></span><span class="cod">${CODIGO[x.k || 'V']}</span>
-      <div class="crit-cuerpo"><header><h2>${esc(x.nombre)}</h2><span class="estado e-${x.estado}">${ESTADO_TXT[x.estado]}</span></header>
+      <div class="crit-cuerpo"><header><h2>${esc(x.nombre)}</h2><span class="estado e-${x.estado}">${ESTADO_TXT[x.estado]}</span>${tendenciaTxt(x.serie, x.invertida) ? `<span class="tend t-${tendenciaTxt(x.serie, x.invertida)}">${tendenciaTxt(x.serie, x.invertida)}</span>` : ''}</header>
       ${x.lineas.map((l) => `<p>${esc(l)}</p>`).join('')}
       ${sparkline(x.serie, x.umbral, x.invertida)}</div></article>`;
   let regla = '';
   if (n >= 24) regla = cumplidas === 4 ? 'Con 4 de 4 en S24 y S26: reserva en S27 y examen en S29.' : cumplidas === 3 ? 'Con 3 de 4: dos semanas de refuerzo en la destreza fallida, recomprobación en S28 y examen en S30.' : 'Con 2 de 4 o menos: aplazar a junio de 2027 con nueva reserva.';
   else if (n >= 20) {
-    const lis = medsDe('listening').slice(-3), sL = medsDe('sim_L').at(-1), sR = medsDe('sim_R').at(-1);
+    const lis = lisObjetivas().slice(-3), sL = ultSim('sim_L'), sR = ultSim('sim_R');
     const sm = [...S.sem.values()].filter((x) => x.semana > 0).sort((a, b) => a.semana - b.semana).at(-1);
     const conds = [
-      ['Listening de 65 % o más en 3 episodios seguidos', lis.length === 3 && lis.every((m) => m.valor >= 65)],
+      ['Listening en 3 episodios seguidos a 5 puntos o menos del umbral (75 % dictado o 65 % preguntas)', lis.length === 3 && lis.every((m) => okL(m, 5))],
       ['Simulacro R+L de 60 % o más de media', sL && sR && (sL.valor + sR.valor) / 2 >= 60],
       ['Speaking en verde en el último mini-diagnóstico', sm && sm.S === 'verde'],
       ['Writing en verde en el último mini-diagnóstico', sm && sm.W === 'verde']];
@@ -434,7 +495,7 @@ function vistaCriterios() {
   }
   const recientes = [...S.med.values()].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 8);
   const NOM = { listening: 'Listening', murphy: 'Murphy', murphy_repaso: 'Murphy repaso', speaking: 'Speaking', writing: 'Writing', sim_L: 'Simulacro L', sim_R: 'Simulacro R', sim_W: 'Simulacro W', sim_S: 'Simulacro S', sim_err: 'Errores simulacro', anki: 'Anki' };
-  const val = (m) => m.tipo === 'speaking' ? `${m.valor} s` : m.tipo === 'writing' ? `${m.valor} pal.` : m.tipo === 'sim_err' ? `${m.valor} err.` : `${m.valor} %`;
+  const val = (m) => m.tipo === 'listening' ? `${m.valor} %${m.extra.metodo && m.extra.metodo !== 'estimacion' ? '' : ' est.'}` : m.tipo === 'speaking' ? `${m.valor} s` : m.tipo === 'writing' ? `${m.valor} pal.` : m.tipo === 'sim_err' ? `${m.valor} err.` : `${m.valor} %`;
   return `<section class="cabecera sem-cab"><p class="grande cifra">${cumplidas}<span class="de"> de 4 destrezas</span></p>
       <p class="sub-cab">Criterios de salida de la sección 9. No se reserva el examen hasta cumplirlos.</p></section>
     ${regla ? `<p class="ayuda regla">${regla}</p>` : ''}
@@ -444,7 +505,7 @@ function vistaCriterios() {
     <p class="ayuda">Murphy usa la media de las últimas 5 unidades medidas.</p>
     <button class="boton" data-acc="medir">Añadir una medición</button>
     <h2 class="h2">Últimas mediciones</h2>
-    ${recientes.length ? `<ul class="lista-med">${recientes.map((m) => `<li><span>${fmtCorta(parseISO(m.fecha))}</span><span>${NOM[m.tipo] || m.tipo}${m.extra && m.extra.unidad ? ` U${esc(m.extra.unidad)}` : ''}</span><span class="cifra">${val(m)}</span><button class="enlace" data-acc="borrar-med" data-id="${esc(m.id)}">Borrar</button></li>`).join('')}</ul>` : '<p class="vacio">Las mediciones aparecen aquí al anotar resultados en las tiras de Hoy.</p>'}`;
+    ${recientes.length ? `<ul class="lista-med">${recientes.map((m) => `<li><span>${fmtCorta(parseISO(m.fecha))}</span><span>${NOM[m.tipo] || m.tipo}${m.extra && m.extra.muestra ? ' (muestra)' : ''}${m.extra && m.extra.unidad ? ` U${esc(m.extra.unidad)}` : ''}</span><span class="cifra">${val(m)}</span><button class="enlace" data-acc="borrar-med" data-id="${esc(m.id)}">Borrar</button></li>`).join('')}</ul>` : '<p class="vacio">Las mediciones aparecen aquí al anotar resultados en las tiras de Hoy.</p>'}`;
 }
 
 /* ================= Vista: Datos ================= */
@@ -463,7 +524,7 @@ function vistaDatos() {
     <h2 class="h2">Borrar todo</h2>
     <p class="ayuda">Elimina sesiones, mediciones y semáforos. No se puede deshacer.</p>
     <button class="boton peligro" data-acc="borrar-todo">Borrar todos los datos</button>
-    <p class="version">Versión 1.5, diseño de fichas. Plan v3.1.</p>`;
+    <p class="version">Versión 1.6 · notas, racha Anki, tendencias, listening medido, criterios del examen. Plan v3.2.</p>`;
 }
 
 /* ================= Hojas (formularios) ================= */
@@ -474,22 +535,39 @@ const nv = (el) => (el && el.value !== '' ? Number(el.value) : null);
 const semSel = (name, label, v) => `<label class="campo"><span>${label}</span><select name="${name}">
   ${[['', 'Sin valorar'], ['verde', '🟢 Verde'], ['ambar', '🟡 Ámbar'], ['rojo', '🔴 Rojo']].map(([k, t]) => `<option value="${k}" ${v === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>`;
 
+const sel = (name, label, opts, v) => `<label class="campo"><span>${label}</span><select name="${name}">${opts.map(([k, t]) => `<option value="${k}" ${v === k ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
+
+/* Listening: el % sale de aciertos / total (dictado o preguntas). La estimación solo se guarda. */
+const lisCampos = (x, v) => sel('fuente' + x, 'Fuente', FUENTES_L, v.fuente) + sel('metodo' + x, 'Cómo lo has medido', METODOS_L, v.metodo)
+  + `<div class="rejilla-campos">${num('aciertos' + x, 'Aciertos', v.aciertos, 0, 500)}${num('total' + x, 'Total', v.total, 0, 500)}</div>`
+  + num('pct' + x, '% estimado (solo si es estimación)', v.metodo === 'estimacion' ? v.pct : undefined, 0, 100);
+function lisLeer(f, x) {
+  const met = f['metodo' + x].value, ac = nv(f['aciertos' + x]), tot = nv(f['total' + x]);
+  const medido = met !== 'estimacion' && ac !== null && tot;
+  const valor = medido ? Math.round((Math.min(ac, tot) / tot) * 100) : nv(f['pct' + x]);
+  if (valor === null) return null;
+  return { valor, extra: { fuente: f['fuente' + x].value, metodo: medido ? met : 'estimacion', aciertos: medido ? ac : null, total: medido ? tot : null } };
+}
+const lisCargar = (m) => (m ? { pct: m.valor, ...m.extra, metodo: m.extra.metodo || 'estimacion', fuente: m.extra.fuente || (m.extra.episodio === 'Mini-diagnóstico' ? 'diag' : '6ME') } : {});
+
 const FORMS = {
   listening: {
     titulo: 'Listening',
     cargar: (ms) => {
       const l = ms.filter((x) => x.tipo === 'listening').sort((a, b) => a.id.localeCompare(b.id));
-      const v = l[0] ? { pct: l[0].valor, ...l[0].extra } : {};
-      if (l[1]) { v.pct2 = l[1].valor; v.episodio2 = l[1].extra.episodio; v.palabras2 = l[1].extra.palabras; }
+      const v = lisCargar(l[0]);
+      if (l[1]) { const w = lisCargar(l[1]); for (const k in w) v[k + '2'] = w[k]; }
       return v;
     },
-    html: (v) => num('pct', '% en primera escucha', v.pct, 0, 100) + txt('episodio', 'Episodio o fuente', v.episodio) + area('palabras', 'Palabras nuevas con contexto, 3 a 5', v.palabras)
+    html: (v) => '<p class="ayuda">Dictado: tras la escucha en frío, escribe 3 frases (minutos 1, 3 y 5, máximo 2 escuchas cada una) y corrígelas con la transcripción. Aciertos = palabras bien escritas; total = palabras de las 3 frases.</p>'
+      + lisCampos('', v) + txt('episodio', 'Episodio', v.episodio) + area('palabras', 'Palabras nuevas con contexto, 3 a 5', v.palabras)
       + `<details class="segundo"${v.pct2 !== undefined ? ' open' : ''}><summary>Segundo episodio del mismo bloque</summary>
-        ${num('pct2', '% en primera escucha', v.pct2, 0, 100)}${txt('episodio2', 'Episodio o fuente', v.episodio2)}${area('palabras2', 'Palabras nuevas con contexto, 3 a 5', v.palabras2)}</details>`,
+        ${lisCampos('2', { fuente: v.fuente2 || v.fuente, metodo: v.metodo2 || 'dictado', ...Object.fromEntries(['aciertos', 'total', 'pct'].map((k) => [k, v[k + '2']])) })}${txt('episodio2', 'Episodio', v.episodio2)}${area('palabras2', 'Palabras nuevas con contexto, 3 a 5', v.palabras2)}</details>`,
     leer: (f) => {
-      const out = [], p = nv(f.pct), p2 = nv(f.pct2);
-      if (p !== null) out.push({ tipo: 'listening', valor: p, extra: { episodio: f.episodio.value.trim(), palabras: f.palabras.value.trim() } });
-      if (p2 !== null) out.push({ tipo: 'listening', sub: '2', valor: p2, extra: { episodio: f.episodio2.value.trim(), palabras: f.palabras2.value.trim() } });
+      const out = [];
+      const a = lisLeer(f, ''), b = lisLeer(f, '2');
+      if (a) out.push({ tipo: 'listening', valor: a.valor, extra: { ...a.extra, episodio: f.episodio.value.trim(), palabras: f.palabras.value.trim() } });
+      if (b) out.push({ tipo: 'listening', sub: '2', valor: b.valor, extra: { ...b.extra, episodio: f.episodio2.value.trim(), palabras: f.palabras2.value.trim() } });
       return out;
     },
   },
@@ -502,14 +580,24 @@ const FORMS = {
   speaking: {
     titulo: 'Speaking grabado',
     cargar: (ms) => { const m = ms.find((x) => x.tipo === 'speaking'); return m ? { seg: m.valor, ...m.extra } : {}; },
-    html: (v) => num('seg', 'Duración en segundos', v.seg, 0, 600) + num('pausas', 'Pausas de más de 5 s', v.pausas, 0, 50) + num('errores', 'Errores que dificultan la comprensión', v.errores, 0, 50),
-    leer: (f) => { const s = nv(f.seg); return s === null ? [] : [{ tipo: 'speaking', valor: s, extra: { pausas: nv(f.pausas) ?? 0, errores: nv(f.errores) ?? 0 } }]; },
+    html: (v) => num('seg', 'Duración del monólogo en segundos (parte 4: 90 o más)', v.seg, 0, 600) + num('pausas', 'Pausas de más de 5 s', v.pausas, 0, 50) + num('errores', 'Errores que dificultan la comprensión', v.errores, 0, 50)
+      + `<div class="rejilla-campos">${num('sitOk', 'Situaciones de rol resueltas', v.sitOk, 0, 10)}${num('sitTotal', 'Situaciones de rol planteadas', v.sitTotal, 0, 10)}</div>`,
+    leer: (f) => { const s = nv(f.seg); return s === null ? [] : [{ tipo: 'speaking', valor: s, extra: { pausas: nv(f.pausas) ?? 0, errores: nv(f.errores) ?? 0, sitOk: nv(f.sitOk) ?? 0, sitTotal: nv(f.sitTotal) ?? 0 } }]; },
   },
   writing: {
     titulo: 'Writing',
     cargar: (ms) => { const m = ms.find((x) => x.tipo === 'writing'); return m ? { palabras: m.valor, ...m.extra } : {}; },
-    html: (v) => num('palabras', 'Palabras', v.palabras, 0, 400) + num('minutos', 'Minutos empleados', v.minutos, 0, 120) + num('conectores', 'Conectores distintos bien usados', v.conectores, 0, 30) + num('errores', 'Errores gramaticales', v.errores, 0, 50),
-    leer: (f) => { const p = nv(f.palabras); return p === null ? [] : [{ tipo: 'writing', valor: p, extra: { minutos: nv(f.minutos) ?? 0, conectores: nv(f.conectores) ?? 0, errores: nv(f.errores) ?? 0 } }]; },
+    html: (v) => sel('tarea', 'Tarea', [['informal', 'Informal: carta o email a un amigo (100-120)'], ['formal', 'Formal: respuesta corta a un texto (70-100)'], ['examen', 'Las 2 tareas del examen seguidas']], v.tarea)
+      + num('palabras', 'Palabras (en el examen, las de la tarea formal)', v.palabras, 0, 400) + num('errores', 'Errores gramaticales (de esa tarea)', v.errores, 0, 50)
+      + num('minutos', 'Minutos empleados en total', v.minutos, 0, 120) + num('conectores', 'Conectores distintos bien usados', v.conectores, 0, 30)
+      + `<details class="segundo"${v.tarea === 'examen' ? ' open' : ''}><summary>Tarea informal (solo si son las 2 del examen)</summary>
+        ${num('palabras2', 'Palabras de la tarea informal', v.palabras2, 0, 400)}${num('errores2', 'Errores gramaticales de la tarea informal', v.errores2, 0, 50)}</details>`,
+    leer: (f) => {
+      const p = nv(f.palabras); if (p === null) return [];
+      const examen = f.tarea.value === 'examen';
+      return [{ tipo: 'writing', valor: p, extra: { tarea: f.tarea.value, minutos: nv(f.minutos) ?? 0, conectores: nv(f.conectores) ?? 0, errores: nv(f.errores) ?? 0,
+        palabras2: examen ? nv(f.palabras2) : null, errores2: examen ? nv(f.errores2) : null } }];
+    },
   },
   simulacro: {
     titulo: 'Simulacro',
@@ -528,17 +616,18 @@ const FORMS = {
       return out;
     },
   },
+  muestra: null, // se completa debajo: igual que el simulacro, marcado como muestra
   minidiag: {
     titulo: 'Mini-diagnóstico',
     cargar: (ms, n) => {
       const l = ms.find((x) => x.tipo === 'listening'), m = ms.find((x) => x.tipo === 'murphy_repaso');
-      return { pct: l && l.valor, mur: m && m.valor, ...(S.sem.get(n) || {}) };
+      return { ...lisCargar(l), fuente: 'diag', metodo: l ? (l.extra.metodo || 'estimacion') : 'dictado', mur: m && m.valor, ...(S.sem.get(n) || {}) };
     },
-    html: (v) => num('pct', 'Listening, % en primera escucha', v.pct, 0, 100) + num('mur', 'Murphy, % en los 10 ejercicios de repaso', v.mur, 0, 100)
+    html: (v) => '<p class="ayuda">Listening: un episodio de 6 Minute English, medido con dictado o con preguntas.</p>' + lisCampos('', v) + num('mur', 'Murphy, % en los 10 ejercicios de repaso', v.mur, 0, 100)
       + `<div class="rejilla-campos">${semSel('sL', 'Listening', v.L)}${semSel('sR', 'Reading', v.R)}${semSel('sS', 'Speaking', v.S)}${semSel('sW', 'Writing', v.W)}</div>` + area('ajuste', 'Ajuste para la semana siguiente', v.ajuste),
     leer: (f) => {
-      const out = [], p = nv(f.pct), m = nv(f.mur);
-      if (p !== null) out.push({ tipo: 'listening', valor: p, extra: { episodio: 'Mini-diagnóstico', palabras: '' } });
+      const out = [], l = lisLeer(f, ''), m = nv(f.mur);
+      if (l) out.push({ tipo: 'listening', valor: l.valor, extra: { ...l.extra, episodio: 'Mini-diagnóstico', palabras: '' } });
       if (m !== null) out.push({ tipo: 'murphy_repaso', valor: m, extra: {} });
       return out;
     },
@@ -551,6 +640,9 @@ const FORMS = {
     leer: (f) => { const p = nv(f.pct); return p === null ? [] : [{ tipo: 'anki', valor: p, extra: {} }]; },
   },
 };
+
+FORMS.muestra = { ...FORMS.simulacro, titulo: 'Modelo de muestra (no cuenta para la puerta)',
+  leer: (f) => FORMS.simulacro.leer(f).map((m) => ({ ...m, extra: { ...m.extra, muestra: true } })) };
 
 function regla90(form) {
   const out = $('.regla90', form); if (!out) return;
@@ -578,17 +670,20 @@ function hojaBloque(f, b) {
   const n = semanaDe(f);
   const v = form ? form.cargar([...S.med.values()].filter((m) => m.ref === key), n) : {};
   if (b.tipo === 'murphy' && b.unidad && !v.unidad) v.unidad = b.unidad;
+  if (b.tipo === 'listening') { if (!v.fuente) v.fuente = FUENTE_BLOQUE[b.id] || '6ME'; if (!v.metodo) v.metodo = 'dictado'; }
+  if (b.tipo === 'writing' && !v.tarea) v.tarea = b.tarea || 'informal';
   const radio = (k, t) => `<label class="pill"><input type="radio" name="estado" value="${k}" ${est === k ? 'checked' : ''}><span>${t}</span></label>`;
   abrirHoja(`<h2 class="hoja-tit">${esc(b.nombre)}</h2><p class="hoja-sub">${esc(detalleDe(b))}${detalleDe(b) ? '. ' : ''}${b.min} min previstos.</p>
     ${futuro ? '<p class="alerta a-info">Día futuro: no se puede registrar todavía.</p>' : `
     <fieldset class="pills">${radio('hecha', 'Hecha')}${radio('parcial', 'Parcial')}${radio('saltada', 'Saltada')}${radio('pendiente', 'Pendiente')}</fieldset>
     <label class="campo"><span>Minutos reales</span><span class="paso"><button type="button" data-paso="-5" aria-label="Restar 5">−5</button>
       <input name="min" type="number" inputmode="numeric" min="0" max="300" value="${s ? s.minReal : b.min}"><button type="button" data-paso="5" aria-label="Sumar 5">+5</button></span></label>
+    <label class="campo"><span>Nota (opcional)</span><textarea name="nota" rows="2" placeholder="Qué me costó, error típico, repasar…">${esc(s && s.nota ? s.nota : '')}</textarea></label>
     ${form ? `<h3 class="h3">${form.titulo}</h3>${form.html(v)}` : ''}`}`,
   async (fm) => {
     if (futuro) return;
     const e = fm.estado.value;
-    await guardarSesion(f, b, e, Math.max(0, nv(fm.min) ?? b.min));
+    await guardarSesion(f, b, e, Math.max(0, nv(fm.min) ?? b.min), fm.nota ? fm.nota.value : undefined);
     if (form) {
       await guardarMediciones(key, f, e === 'pendiente' ? [] : form.leer(fm));
       if (form.semaforo && e !== 'pendiente') { const x = { semana: n, ...form.semaforo(fm) }; S.sem.set(n, x); await DB.poner('semaforos', x); }
@@ -609,7 +704,7 @@ function hojaBloque(f, b) {
 }
 
 function hojaMedicion() {
-  const tipos = [['listening', 'Listening (episodio suelto)'], ['murphy', 'Murphy (unidad)'], ['speaking', 'Speaking grabado'], ['writing', 'Writing'], ['simulacro', 'Simulacro'], ['anki', 'Retención de Anki']];
+  const tipos = [['listening', 'Listening (episodio suelto)'], ['murphy', 'Murphy (unidad)'], ['speaking', 'Speaking grabado'], ['writing', 'Writing'], ['simulacro', 'Simulacro'], ['muestra', 'Modelo de muestra'], ['anki', 'Retención de Anki']];
   abrirHoja(`<h2 class="hoja-tit">Añadir una medición</h2>
     <label class="campo"><span>Tipo</span><select name="tipo">${tipos.map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></label>
     <label class="campo"><span>Fecha</span><input name="fecha" type="date" value="${iso(hoy())}" min="${PLAN.inicioS1}" max="2027-05-02"></label>
@@ -620,7 +715,7 @@ function hojaMedicion() {
     await guardarMediciones(`manual:${Date.now()}`, parseISO(fm.fecha.value), lista);
   },
   (fm) => {
-    const pintar = () => { $('.campos-tipo', fm).innerHTML = FORMS[fm.tipo.value].html({}); if (fm.tipo.value === 'murphy') { fm.pct.addEventListener('input', () => regla90(fm)); regla90(fm); } };
+    const pintar = () => { $('.campos-tipo', fm).innerHTML = FORMS[fm.tipo.value].html({ fuente: '6ME', metodo: 'dictado', tarea: 'informal' }); if (fm.tipo.value === 'murphy') { fm.pct.addEventListener('input', () => regla90(fm)); regla90(fm); } };
     fm.tipo.addEventListener('change', pintar); pintar();
   });
 }
@@ -683,31 +778,57 @@ async function copiar(texto) {
   catch { abrirHoja(`<h2 class="hoja-tit">Fila del registro</h2><p class="ayuda">No se pudo copiar automáticamente. Selecciona el texto.</p><textarea class="salida" rows="10" readonly>${esc(texto)}</textarea>`, () => {}); }
 }
 
+function datosActuales() {
+  const ajustes = [...S.aj].filter(([k]) => k !== 'fechaSimulada').map(([k, v]) => ({ k, v }));
+  return { app: 'ingles-b1', version: 1, exportado: new Date().toISOString(),
+    sesiones: [...S.ses.values()], mediciones: [...S.med.values()], semaforos: [...S.sem.values()], ajustes };
+}
+function descargar(datos, nombre) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(datos, null, 1)], { type: 'application/json' }));
+  const a = document.createElement('a'); a.href = url; a.download = nombre;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 async function exportar() {
   await setAjuste('ultimaExport', iso(hoy()));
-  const ajustes = [...S.aj].filter(([k]) => k !== 'fechaSimulada').map(([k, v]) => ({ k, v }));
-  const datos = { app: 'ingles-b1', version: 1, exportado: new Date().toISOString(),
-    sesiones: [...S.ses.values()], mediciones: [...S.med.values()], semaforos: [...S.sem.values()], ajustes };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(datos, null, 1)], { type: 'application/json' }));
-  const a = document.createElement('a'); a.href = url; a.download = `ingles-b1-copia-${iso(hoyReal())}.json`;
-  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  descargar(datosActuales(), `ingles-b1-copia-${iso(hoyReal())}.json`);
   render(); toast('Copia exportada en Descargas');
+}
+
+/* Comprueba la copia entera ANTES de tocar nada. Devuelve el texto del problema o null si está bien. */
+function problemaCopia(d) {
+  if (!d || d.app !== 'ingles-b1') return 'Ese archivo no es una copia de la app. Elige un ingles-b1-copia-….json';
+  const fechaOk = (x) => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
+  for (const [s, clave] of Object.entries(DB.STORES)) {
+    if (d[s] !== undefined && !Array.isArray(d[s])) return `La copia está dañada: «${s}» no es una lista.`;
+    for (const [i, x] of (d[s] || []).entries()) {
+      if (!x || typeof x !== 'object' || x[clave] === undefined || x[clave] === null || x[clave] === '') return `La copia está dañada: el registro ${i + 1} de «${s}» no tiene «${clave}».`;
+      if ((s === 'sesiones' || s === 'mediciones') && !fechaOk(x.fecha)) return `La copia está dañada: el registro ${i + 1} de «${s}» tiene una fecha incorrecta.`;
+      if (s === 'mediciones' && typeof x.valor !== 'number') return `La copia está dañada: la medición ${i + 1} no tiene un valor numérico.`;
+    }
+  }
+  if (!Array.isArray(d.sesiones)) return 'La copia está dañada: no tiene sesiones.';
+  return null;
 }
 async function importar(file) {
   let d;
   try { d = JSON.parse(await file.text()); } catch { toast('Ese archivo no es una copia de la app. Elige un ingles-b1-copia-….json'); return; }
-  if (!d || d.app !== 'ingles-b1' || !Array.isArray(d.sesiones)) { toast('Ese archivo no es una copia de la app. Elige un ingles-b1-copia-….json'); return; }
+  const fallo = problemaCopia(d);
+  if (fallo) { toast(fallo + ' No se ha cambiado nada.'); return; }
   const fechaCopia = (d.exportado || '').slice(0, 10);
-  if (!confirm(`Esto sustituye los datos actuales por la copia del ${fechaCopia}. ¿Continuar?`)) return;
+  if (!confirm(`Esto sustituye los datos actuales por la copia del ${fechaCopia}. Antes se descargará una copia de lo que tienes ahora. ¿Continuar?`)) return;
+  // Red de seguridad: copia de los datos actuales antes de sustituirlos
+  if (S.ses.size || S.med.size) descargar(datosActuales(), `ingles-b1-antes-de-importar-${iso(hoyReal())}.json`);
   d.ajustes = (d.ajustes || []).filter((x) => x.k !== 'fechaSimulada');
   if (!d.ajustes.some((x) => x.k === 'ultimaExport') && fechaCopia) d.ajustes.push({ k: 'ultimaExport', v: fechaCopia });
-  for (const s of ['sesiones', 'mediciones', 'semaforos', 'ajustes']) { await DB.vaciar(s); for (const x of d[s] || []) await DB.poner(s, x); }
+  try { await DB.reemplazar(d); }
+  catch (err) { toast(`No se pudo importar (${err && err.message ? err.message : 'error'}). Tus datos no han cambiado.`); return; }
   S.ses.clear(); S.med.clear(); S.sem.clear(); S.aj.clear();
   await cargar(); S.dia = null; render();
   const fechas = d.sesiones.map((x) => x.fecha).sort();
   const rango = fechas.length ? `, del ${fmtCorta(parseISO(fechas[0]))} al ${fmtCorta(parseISO(fechas.at(-1)))}` : '';
   const tareas = d.ajustes.filter((x) => x.k.startsWith('s0:')).length;
-  toast(`Copia importada: ${d.sesiones.length} sesiones, ${(d.mediciones || []).length} mediciones${tareas ? `, ${tareas} tareas de S0` : ''}${rango}.`);
+  const notas = d.sesiones.filter((x) => x.nota).length;
+  toast(`Copia importada: ${d.sesiones.length} sesiones, ${(d.mediciones || []).length} mediciones${notas ? `, ${notas} notas` : ''}${tareas ? `, ${tareas} tareas de S0` : ''}${rango}.`);
 }
 
 document.addEventListener('click', async (e) => {

@@ -30,8 +30,27 @@ const DB = (() => {
       t.onerror = () => rej(t.error);
     });
   }
+  /* Sustituye todos los almacenes en UNA sola transacción.
+     Si cualquier registro falla, IndexedDB deshace todo y los datos anteriores siguen intactos. */
+  function reemplazar(datos) {
+    return new Promise((res, rej) => {
+      const nombres = Object.keys(STORES);
+      const t = db.transaction(nombres, 'readwrite');
+      t.oncomplete = () => res();
+      t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error || new Error('Importación cancelada'));
+      try {
+        for (const s of nombres) {
+          const o = t.objectStore(s);
+          o.clear();
+          for (const x of datos[s] || []) o.put(x);
+        }
+      } catch (err) { t.abort(); rej(err); }
+    });
+  }
   return {
     STORES,
+    reemplazar,
     abrir,
     todos: (s) => tx(s, 'readonly', (o) => o.getAll()),
     poner: (s, obj) => tx(s, 'readwrite', (o) => o.put(obj)),

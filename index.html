@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <p id="aviso-version" hidden><span>Hay una versión nueva de la app.</span> <button type="button">Actualizar</button></p>
   <p id="aviso-fecha" hidden></p>
   <main id="vista" aria-live="polite"></main>
   <nav class="tabs" aria-label="Pantallas">
@@ -28,8 +29,23 @@
   <script src="db.js"></script>
   <script src="app.js"></script>
   <script>
+    /* Aviso de versión nueva: aparece cuando GitHub tiene una versión más reciente que la del móvil */
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-      navigator.serviceWorker.register('sw.js');
+      const aviso = document.getElementById('aviso-version');
+      let recargar = false;
+      const mostrar = (sw) => {
+        aviso.hidden = false;
+        aviso.querySelector('button').onclick = () => { recargar = true; aviso.querySelector('button').disabled = true; sw.postMessage('activar'); };
+      };
+      navigator.serviceWorker.addEventListener('controllerchange', () => { if (recargar) location.reload(); });
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+        if (reg.waiting && navigator.serviceWorker.controller) mostrar(reg.waiting);
+        reg.addEventListener('updatefound', () => {
+          const nuevo = reg.installing;
+          nuevo.addEventListener('statechange', () => { if (nuevo.state === 'installed' && navigator.serviceWorker.controller) mostrar(nuevo); });
+        });
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+      });
     }
   </script>
 </body>
