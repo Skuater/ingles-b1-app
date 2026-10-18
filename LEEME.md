@@ -1,6 +1,6 @@
 # Inglés B1 · PWA de seguimiento
 
-App instalable en Android (versión 1.7, diseño de fichas con «ficha en mano»). Sigue el plan de `02_ruta_aprendizaje_B1_v3.2.md`.
+App instalable en Android (versión 1.7.1, diseño de fichas con «ficha en mano»). Sigue el plan de `02_ruta_aprendizaje_B1_v3.2.md`.
 Funciona sin conexión y guarda todo en el móvil. No lee Outlook: el plan va dentro
 de la app (`plan.js`) y los recordatorios siguen llegando desde el calendario de Outlook.
 
@@ -22,7 +22,7 @@ Dirección: https://skuater.github.io/ingles-b1-app/ · Repositorio: `Skuater/in
 ## Actualizar la app
 
 1. Cambia los archivos en el repositorio (subiéndolos en GitHub o pidiéndoselo a Claude).
-2. En `sw.js`, sube `const VERSION = 'b1-v10';` a `'b1-v11'` (y así sucesivamente). En `app.js`, actualiza el texto de versión de la pantalla Datos.
+2. En `sw.js`, sube `const VERSION = 'b1-v11';` a `'b1-v12'` (y así sucesivamente). En `app.js`, actualiza el texto de versión de la pantalla Datos.
 3. En el móvil, al abrir la app aparece **«Hay una versión nueva · Actualizar»**. Púlsalo y se recarga con la versión nueva.
 
 Tus datos no se pierden al actualizar. Cada versión guarda todos sus archivos juntos: nunca se mezcla un archivo nuevo con uno antiguo.
@@ -71,6 +71,7 @@ Las recuperaciones puntuales se añaden en `AJUSTES_DIA`, al final de `plan.js`:
 
 | Versión | Fecha | Cambios |
 | --- | --- | --- |
+| 1.7.1 (b1-v11) | 18 oct 2026 | Corrección: si tras «Hecha» o la pulsación larga se cancela la hoja (Cancelar, atrás o Escape), la ficha vuelve a como estaba. Guardar la deja hecha |
 | 1.7 (b1-v10) | 18 oct 2026 | Modelo 3 «Ficha en mano»: en Hoy, la ficha que toca sale grande con los botones «Hecha» y «Anotar resultado», después va la cola y las hechas se pliegan en una línea. Ruta en 30 filas verticales por fase, con las horas en la misma fila. Cabecera de Hoy en una línea. Copia de la 1.6 en la rama `copia-v1.6-antes-rediseno` |
 | 1.6 (b1-v9) | 18 oct 2026 | Recupera notas, racha de Anki, resumen de hoy, tendencias y resumen global (perdidos el 8 oct). Listening medido con dictado o preguntas. Criterios con el formato real del examen. Gramática B1 completa. Importación segura. Aviso de versión nueva |
 | 1.5 (b1-v8) | 18 oct 2026 | Unidad de Murphy por día y recuperación de S2 |

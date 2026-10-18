@@ -545,7 +545,7 @@ function vistaDatos() {
     <h2 class="h2">Borrar todo</h2>
     <p class="ayuda">Elimina sesiones, mediciones y semáforos. No se puede deshacer.</p>
     <button class="boton peligro" data-acc="borrar-todo">Borrar todos los datos</button>
-    <p class="version">Versión 1.7 · ficha en mano y ruta en filas. Plan v3.2.</p>`;
+    <p class="version">Versión 1.7.1 · ficha en mano y ruta en filas. Plan v3.2.</p>`;
 }
 
 /* ================= Hojas (formularios) ================= */
@@ -673,17 +673,21 @@ function regla90(form) {
   out.className = 'regla90 ' + (p === null ? '' : p >= 90 ? 'r-ok' : p < 70 ? 'r-bad' : 'r-warn');
 }
 
-function abrirHoja(html, alGuardar, alAbrir) {
+/* alCancelar: qué hacer si la hoja se cierra sin Guardar (Cancelar, atrás o Escape) */
+function abrirHoja(html, alGuardar, alAbrir, alCancelar) {
   const d = $('#hoja');
   d.innerHTML = `<form method="dialog" class="hoja-form">${html}
     <div class="acciones"><button value="cancelar" class="boton sec" formnovalidate>Cancelar</button><button value="ok" class="boton">Guardar</button></div></form>`;
   const f = $('form', d);
-  d.onclose = async () => { if (d.returnValue === 'ok') { await alGuardar(f); render(); } d.returnValue = ''; };
+  d.onclose = async () => {
+    const ok = d.returnValue === 'ok'; d.returnValue = '';
+    if (ok) { await alGuardar(f); render(); } else if (alCancelar) { await alCancelar(); render(); }
+  };
   if (alAbrir) alAbrir(f);
   d.showModal();
 }
 
-function hojaBloque(f, b) {
+function hojaBloque(f, b, alCancelar) {
   const key = clave(f, b), s = S.ses.get(key);
   const futuro = f > hoy();
   const est = s ? s.estado : 'hecha';
@@ -721,7 +725,7 @@ function hojaBloque(f, b) {
     };
     minIn.addEventListener('input', sincEstado);
     if (b.tipo === 'murphy') { fm.pct.addEventListener('input', () => regla90(fm)); regla90(fm); }
-  });
+  }, alCancelar);
 }
 
 function hojaMedicion() {
@@ -770,9 +774,17 @@ async function completar(el) {
   if (navigator.vibrate) navigator.vibrate(15);
   if (el.dataset.s0) { await setAjuste('s0:' + el.dataset.s0, true); render(); toast('Tarea hecha', async () => { await setAjuste('s0:' + el.dataset.s0, null); render(); }); return; }
   const f = S.dia || hoy(), b = bloquesDe(f).find((x) => x.id === el.dataset.b);
+  const previa = S.ses.get(clave(f, b)); // para volver atrás si se cancela la hoja
   await guardarSesion(f, b, 'hecha', b.min);
   render();
-  if (FORMS[b.tipo] && b.tipo !== 'anki') { hojaBloque(f, b); return; }
+  if (FORMS[b.tipo] && b.tipo !== 'anki') {
+    // Cancelar (o cerrar sin Guardar) deja la ficha como estaba antes de pulsar «Hecha»
+    hojaBloque(f, b, async () => {
+      if (previa) { S.ses.set(previa.key, previa); await DB.poner('sesiones', previa); } else await guardarSesion(f, b, 'pendiente');
+      toast(`${b.nombre}: sin cambios`);
+    });
+    return;
+  }
   toast(`${b.nombre}: ${b.min} min`, async () => { await guardarSesion(f, b, 'pendiente'); render(); });
 }
 function tocar(el) {
