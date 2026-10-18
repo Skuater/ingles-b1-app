@@ -259,7 +259,7 @@ function vistaHoy() {
   const ankiOk = ankiBl ? minHecho(S.ses.get(clave(f, ankiBl))) > 0 : false;
   const pendN = bl.filter((b) => !S.ses.get(clave(f, b))).length;
   const racha = rachaAnki();
-  const partesHoy = [`${pendN} pendiente${pendN === 1 ? '' : 's'}`,
+  const partesHoy = [
     ankiBl ? (ankiOk ? 'Anki hecho' : 'Anki pendiente') : null,
     racha > 0 ? `racha Anki ${racha} día${racha === 1 ? '' : 's'}` : null].filter(Boolean);
   html += `<p class="resumen-hoy">${esc(partesHoy.join(' · '))}</p>`;
@@ -273,13 +273,42 @@ function vistaHoy() {
     pend.forEach((m) => { html += alertaHTML(['ambar', `Pendiente para hoy: repetir Murphy U${m.extra.unidad || '?'} (${m.valor} %).`]); });
   }
 
-  html += `<ul class="tiras">${bl.map((b) => tiraHTML(f, b, futuro)).join('')}</ul>`;
-  html += `<p class="ayuda">${futuro ? 'Día futuro: puedes verlo, pero no registrarlo.' : 'Mantén pulsada una ficha para cerrarla: se desplaza a la derecha. Tócala para ajustar minutos o anotar resultados.'}</p>`;
+  html += fichasHoy(f, bl, futuro, iso(f) === iso(t));
+  html += `<p class="ayuda">${futuro ? 'Día futuro: puedes verlo, pero no registrarlo.' : 'Pulsa «Hecha» o mantén pulsada cualquier ficha para cerrarla. Tócala para ajustar minutos, nota o resultados.'}</p>`;
   html += `<button class="resumen-sem" data-acc="ir-semana" data-n="${n}">
       <span>Semana ${n}</span><span><b class="cifra">${fmtH(r.hecho)}</b> de ${fmtH(r.plan)} h</span></button>`;
   if (iso(f) === iso(t)) html += avisoCopia(n);
   else if (diaIdx(f) === 6 && !futuro) html += `<button class="boton" data-acc="copiar-registro" data-n="${n}">Copiar la fila del registro de S${n}</button>`;
   return html;
+}
+
+/* Modelo 3 «Ficha en mano» (v1.7): primero la ficha que toca, después la cola y, plegadas, las hechas.
+   Las fichas siguen siendo los mismos .tira con data-b: la pulsación larga y el toque no cambian. */
+function fichasHoy(f, bl, futuro, esHoy) {
+  const est = (b) => { const s = S.ses.get(clave(f, b)); return s ? s.estado : 'pendiente'; };
+  const minDe = (b) => { const s = S.ses.get(clave(f, b)); return s && s.estado !== 'pendiente' ? minHecho(s) : b.min; };
+  if (futuro) return `<p class="cola-tit"><span>Previsto</span><span>${bl.reduce((x, b) => x + b.min, 0)} min</span></p>
+    <ul class="tiras cola">${bl.map((b) => tiraHTML(f, b, true)).join('')}</ul>`;
+  const pend = bl.filter((b) => est(b) === 'pendiente');
+  const hechas = bl.filter((b) => est(b) !== 'pendiente');
+  const [foco, ...cola] = pend;
+  let h = '';
+  if (foco) {
+    h += `<section class="foco"><p class="foco-et"><span>${esHoy ? 'Ahora' : 'Pendiente'}</span><b>${pend.length === 1 ? 'Última ficha' : `1 de ${pend.length} pendientes`}</b></p>
+      <ul class="tiras">${tiraHTML(f, foco, false)}</ul>
+      <div class="foco-botones"><button type="button" class="boton" data-acc="foco-hecha" data-b="${foco.id}">✓ Hecha · ${foco.min} min</button>
+        <button type="button" class="boton sec" data-acc="foco-anotar" data-b="${foco.id}">${FORMS[foco.tipo] && foco.tipo !== 'anki' ? 'Anotar resultado' : 'Ajustar'}</button></div></section>`;
+  } else if (bl.length) {
+    h += `<section class="foco foco-fin"><p class="foco-et"><span>${esHoy ? 'Hoy' : 'Este día'}</span><b>Todo hecho ✓</b></p></section>`;
+  }
+  if (cola.length) h += `<p class="cola-tit"><span>Después</span><span>${cola.reduce((x, b) => x + b.min, 0)} min</span></p>
+    <ul class="tiras cola">${cola.map((b) => tiraHTML(f, b, false)).join('')}</ul>`;
+  if (hechas.length) {
+    const sellos = hechas.map((b) => `<i style="--c:var(--sk-${b.sk})">${CODIGO[b.sk]}</i>`).join('');
+    h += `<details class="hechas"${S.hechasAbiertas ? ' open' : ''}><summary><span><b>${hechas.length} hecha${hechas.length === 1 ? '' : 's'}</b> · ${hechas.reduce((x, b) => x + minDe(b), 0)} min</span><span class="sellos">${sellos}</span></summary>
+      <ul class="tiras">${hechas.map((b) => tiraHTML(f, b, false)).join('')}</ul></details>`;
+  }
+  return h;
 }
 
 function detalleDe(b) {
@@ -438,38 +467,30 @@ function vistaRuta() {
   const planAFecha = resumenes.reduce((a, r) => a + r.planAFecha, 0);
   const pct = totalPlan ? Math.round((totalHecho / totalPlan) * 100) : 0;
   const pctFecha = planAFecha ? Math.round((totalHecho / planAFecha) * 100) : 0;
-  const cab = SEMANAS.map((s) => `<th scope="col" class="${s.n === act ? 'act' : ''}">${s.n}</th>`).join('');
-  const marcas = SEMANAS.map((s) => `<td class="mk">${s.examen ? '●' : s.puerta ? '▲' : s.diag ? '◆' : s.comprob ? '△' : ''}</td>`).join('');
-  const filas = DIAS.map((d, i) => `<tr><th scope="row">${d}</th>${resumenes.map((r) => {
-    const x = r.dias[i];
-    let c = 'fut';
-    if (!x.futuro) c = x.hecho === 0 ? 'n0' : x.hecho < x.plan * 0.5 ? 'n1' : x.hecho < x.plan ? 'n2' : 'n3';
-    const tipo = r.sem.tipo ? ' desc' : '';
-    const esHoy = iso(x.fecha) === iso(t) ? ' hoy' : '';
-    return `<td class="c ${c}${tipo}${esHoy}" data-acc="ir-semana" data-n="${r.n}" title="S${r.n} ${DIAS[i]}: ${x.hecho}/${x.plan} min"></td>`;
-  }).join('')}</tr>`).join('');
-
-  const W = 330, H = 120, bw = W / 30, max = 700;
-  const barras = resumenes.map((r, i) => {
-    if (!r.empezada) return '';
-    const h = (Math.min(r.hecho, max) / max) * (H - 14);
+  // v1.7: una fila por semana (sin desplazamiento horizontal), agrupada por fase, con sus horas
+  const max = 700;
+  const SEP = { 1: 'Fase 0 · diagnóstico', 3: 'Fase 1 · cimientos', 10: 'Fase 2 · salto a B1', 22: 'Fase 3 · recta final' };
+  const filas = resumenes.map((r) => {
+    const s = r.sem;
+    const celdas = r.dias.map((x, i) => {
+      let c = 'fut';
+      if (!x.futuro) c = x.hecho === 0 ? 'n0' : x.hecho < x.plan * 0.5 ? 'n1' : x.hecho < x.plan ? 'n2' : 'n3';
+      return `<i class="c ${c}${s.tipo ? ' desc' : ''}${iso(x.fecha) === iso(t) ? ' hoy' : ''}" title="S${r.n} ${DIAS[i]}: ${x.hecho}/${x.plan} min"></i>`;
+    }).join('');
     const bajo = esNormal(r.n) && r.cerrada && r.hecho < PLAN.minimoMin;
-    const cls = r.sem.tipo ? 'b-desc' : bajo ? 'b-bajo' : 'b-ok';
-    const tick = H - (r.plan / max) * (H - 14);
-    return `<rect x="${i * bw + 1.5}" y="${H - h}" width="${bw - 3}" height="${h}" class="${cls}"/><line x1="${i * bw + 1}" x2="${(i + 1) * bw - 1}" y1="${tick}" y2="${tick}" class="tick"/>`;
+    const mk = s.examen ? '●' : s.puerta ? '▲' : s.diag ? '◆' : s.comprob ? '△' : '';
+    const horas = r.empezada ? `<em>${fmtH(r.hecho)} h</em>` : `<em class="fut">${fmtH(r.plan)}</em>`;
+    return `${SEP[r.n] ? `<p class="rf-sep">${SEP[r.n]}</p>` : ''}<div class="rf-fila${r.n === act ? ' act' : ''}${s.tipo ? ' desc' : ''}" data-acc="ir-semana" data-n="${r.n}" role="button" tabindex="0" aria-label="Semana ${r.n}: ${fmtH(r.hecho)} de ${fmtH(r.plan)} h">
+      <b>S${r.n}</b>${celdas}<span class="rf-h"><span class="rf-mk">${mk}</span><span class="rf-hb"><i class="${s.tipo ? 'desc' : bajo ? 'bajo' : ''}" style="width:${(Math.min(r.hecho, max) / max) * 100}%"></i><s style="left:${(Math.min(r.plan, max) / max) * 100}%"></s></span>${horas}</span></div>`;
   }).join('');
-  const y9 = H - (540 / max) * (H - 14);
 
   return `<section class="cabecera sem-cab"><p class="grande cifra">${act < 1 ? 'S0' : `S${act}`}<span class="de"> de 30</span></p>
       <p class="sub-cab">${totalHecho > 0 ? `<strong>${fmtH(totalHecho)} h</strong> hechas · <strong>${pct} %</strong> del plan${media ? ` · media de las semanas cerradas: ${media} h` : ''}` : 'Todavía no hay horas registradas.'}</p>
       ${act >= 1 && planAFecha ? `<p class="ayuda">Respecto a lo previsto hasta hoy: ${pctFecha} %.</p>` : ''}</section>
-    <div class="rejilla-scroll"><table class="rejilla"><thead><tr><th></th>${cab}</tr><tr><th></th>${marcas}</tr></thead><tbody>${filas}</tbody></table></div>
     <p class="leyenda-r"><span><i class="c n3"></i>Completo</span><span><i class="c n2"></i>Parcial</span><span><i class="c n0"></i>Sin hacer</span><span><i class="c desc"></i>Descarga</span></p>
     <p class="leyenda-r"><span>◆ Mini-diagnóstico</span><span>△ Comprobación</span><span>▲ Puerta</span><span>● Examen</span></p>
-    <h2 class="h2">Horas por semana</h2>
-    <svg class="barras" viewBox="0 0 ${W} ${H + 2}" role="img" aria-label="Horas por semana frente al objetivo">
-      <line x1="0" x2="${W}" y1="${y9}" y2="${y9}" class="linea9"/>${barras}</svg>
-    <p class="ayuda">La raya sobre cada barra es el objetivo de esa semana. La línea discontinua marca el mínimo de 9 h. En rojo, semanas normales cerradas por debajo del mínimo. Toca la rejilla para abrir una semana.</p>`;
+    <div class="ruta-filas"><div class="rf-cab"><span></span>${DIAS.map((d) => `<span>${d}</span>`).join('')}<span class="rf-cab-h">horas · raya = objetivo</span></div>${filas}</div>
+    <p class="ayuda">En rojo, semanas normales cerradas por debajo del mínimo de 9 h. Toca una fila para abrir esa semana.</p>`;
 }
 
 /* ================= Vista: Criterios ================= */
@@ -524,7 +545,7 @@ function vistaDatos() {
     <h2 class="h2">Borrar todo</h2>
     <p class="ayuda">Elimina sesiones, mediciones y semáforos. No se puede deshacer.</p>
     <button class="boton peligro" data-acc="borrar-todo">Borrar todos los datos</button>
-    <p class="version">Versión 1.6 · notas, racha Anki, tendencias, listening medido, criterios del examen. Plan v3.2.</p>`;
+    <p class="version">Versión 1.7 · ficha en mano y ruta en filas. Plan v3.2.</p>`;
 }
 
 /* ================= Hojas (formularios) ================= */
@@ -843,6 +864,10 @@ document.addEventListener('click', async (e) => {
     else if (a === 'ir-semana') { S.semanaVista = Number(t.dataset.n); ir('semana'); }
     else if (a === 'copiar-registro') copiar(filaRegistro(Number(t.dataset.n)));
     else if (a === 'medir') hojaMedicion();
+    else if (a === 'foco-hecha' || a === 'foco-anotar') {
+      const el = $(`.foco .tira[data-b="${t.dataset.b}"]`);
+      if (el) { if (a === 'foco-hecha') await completar(el); else tocar(el); }
+    }
     else if (a === 'borrar-med') { if (confirm('¿Borrar esta medición?')) { S.med.delete(t.dataset.id); await DB.borrar('mediciones', t.dataset.id); render(); } }
     else if (a === 'exportar') exportar();
     else if (a === 'fecha-real') { await setAjuste('fechaSimulada', null); S.dia = null; render(); }
@@ -874,7 +899,10 @@ function render() {
   $$('[data-vista]').forEach((b) => b.setAttribute('aria-current', b.dataset.vista === S.vista ? 'page' : 'false'));
   $('#aviso-fecha').hidden = !S.aj.get('fechaSimulada');
   if (S.aj.get('fechaSimulada')) $('#aviso-fecha').textContent = `Fecha de prueba: ${fmtLarga(hoy())}`;
-  if (S.vista === 'hoy') activarTiras();
+  if (S.vista === 'hoy') {
+    activarTiras();
+    const d = $('details.hechas'); if (d) d.addEventListener('toggle', () => { S.hechasAbiertas = d.open; });
+  }
 }
 
 (async () => {

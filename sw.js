@@ -2,7 +2,7 @@
    Al cambiar cualquier archivo de la app, sube el número de VERSION (y la versión que muestra app.js).
    Cada versión guarda TODOS sus archivos juntos: nunca se mezcla un archivo nuevo con uno antiguo.
    La versión nueva espera hasta que pulses «Actualizar» en el aviso de la app. */
-const VERSION = 'b1-v9';
+const VERSION = 'b1-v10';
 const FUENTES = 'b1-fuentes'; // la tipografía se guarda aparte y sobrevive a las actualizaciones
 const APP = ['./', './index.html', './styles.css', './plan.js', './db.js', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];

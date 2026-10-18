@@ -309,3 +309,74 @@ nav.tabs .datos { border-left: 1px solid var(--rail-borde); font-size: 16px; }
   resize: vertical;
   min-height: 2.6em;
 }
+
+/* ---------- v1.7 · Modelo 3 «Ficha en mano» ---------- */
+/* Cabecera de Hoy en una línea */
+.cabecera:not(.sem-cab) { margin: 0 4px 10px; align-items: baseline; }
+.cabecera:not(.sem-cab) .num-sem { font-size: 34px; flex-direction: row; align-items: baseline; gap: 6px; }
+.cabecera:not(.sem-cab) .num-sem .s { font-size: 34px; font-weight: 800; color: var(--claro); line-height: .85; }
+.cabecera:not(.sem-cab) .cab-txt { max-width: 64%; }
+.cabecera:not(.sem-cab) .sub-cab { display: none; }
+.cabecera:not(.sem-cab) .fase { font-size: 15.5px; font-weight: 600; color: var(--txt); }
+.cabecera:not(.sem-cab) .hito { font-size: 14.5px; margin-top: 0; }
+.progreso-dia { margin-bottom: 10px; }
+.pd-barra i { height: 8px; }
+
+/* La ficha que toca ahora */
+.foco { margin: 0 -16px 10px; padding: 14px 16px 16px; background: var(--rail); border-top: 1px solid var(--rail-borde); border-bottom: 1px solid var(--rail-borde); }
+.foco-et { font-size: 14px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--txt-2); margin: 0 0 8px; display: flex; justify-content: space-between; }
+.foco-et b { color: var(--claro); font-weight: 700; letter-spacing: 0; text-transform: none; font-size: 15px; }
+.foco-fin .foco-et { margin: 0; }
+.foco .tiras { margin: 0; padding: 0; background: none; border: 0; }
+.foco .tira { width: 100%; margin: 0; min-height: 120px; grid-template-columns: 14px 64px 1fr 76px; }
+.foco .tira .cod { font-size: 28px; }
+.foco .tira .nombre { font-size: 24px; }
+.foco .tira .detalle { font-size: 16px; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.foco .tira .min .cifra { font-size: 36px; }
+.foco-botones { display: grid; grid-template-columns: 1.4fr 1fr; gap: 6px; margin-top: 8px; }
+.foco-botones .boton { margin: 0; min-height: 56px; font-size: 18px; }
+.foco-botones .boton.sec { font-size: 17px; }
+
+/* Cola: siguientes fichas compactas */
+.cola-tit { font-size: 14px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--txt-2); margin: 14px 4px 6px; display: flex; justify-content: space-between; }
+.cola-tit span:last-child { letter-spacing: 0; text-transform: none; font-weight: 500; }
+.tiras.cola { margin: 0 0 6px; padding: 0; background: none; border: 0; gap: 4px; }
+.cola .tira { width: 100%; margin: 0; min-height: 54px; }
+.cola .tira .detalle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cola .tira .nombre { font-size: 18px; }
+.cola .tira .min .cifra { font-size: 22px; }
+
+/* Hechas: una sola línea plegable */
+details.hechas { margin: 6px 0 4px; border: 1px solid var(--regla); }
+details.hechas summary { list-style: none; cursor: pointer; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; color: var(--txt); min-height: 48px; }
+details.hechas summary::-webkit-details-marker { display: none; }
+details.hechas summary b { color: var(--claro); }
+details.hechas .sellos { display: flex; gap: 4px; }
+details.hechas .sellos i { width: 26px; height: 26px; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 800; background: var(--papel-hecha); color: var(--ink); border-left: 4px solid var(--c); }
+details.hechas .tiras { margin: 0; padding: 6px; border: 0; }
+details.hechas .tira { width: 100%; margin: 0; min-height: 48px; }
+
+/* Ruta: 30 filas verticales */
+.ruta-filas { margin: 10px 0 0; }
+.rf-cab, .rf-fila { display: grid; grid-template-columns: 40px repeat(7, 22px) 1fr; gap: 3px; align-items: center; }
+.rf-cab { font-size: 13.5px; color: var(--txt-2); text-align: center; margin-bottom: 4px; }
+.rf-cab .rf-cab-h { text-align: left; padding-left: 24px; }
+.rf-fila { min-height: 28px; padding: 1px 4px 1px 0; cursor: pointer; }
+.rf-fila > b { font-size: 15px; font-weight: 600; color: var(--txt-2); font-variant-numeric: tabular-nums; }
+.rf-fila.act { background: rgb(244 238 221 / .07); outline: 1px solid var(--regla); }
+.rf-fila.act > b { color: var(--claro); font-weight: 800; }
+.ruta-filas .c { width: 22px; height: 22px; }
+.rf-h { position: relative; height: 22px; display: flex; align-items: center; gap: 6px; padding-left: 6px; font-size: 14px; color: var(--txt-2); font-variant-numeric: tabular-nums; }
+.rf-hb { flex: 1; position: relative; height: 10px; background: var(--rail); }
+.rf-hb i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--papel); }
+.rf-hb i.bajo { background: #D0705F; }
+.rf-hb i.desc { background: #5E6B75; }
+.rf-hb s { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #86A7C8; }
+.rf-h em { font-style: normal; min-width: 44px; text-align: right; color: var(--txt); }
+.rf-h em.fut { color: var(--txt-2); }
+.rf-mk { color: var(--claro); width: 12px; text-align: center; }
+.rf-sep { font-size: 13.5px; font-weight: 700; color: var(--txt-2); letter-spacing: .06em; text-transform: uppercase; margin: 12px 0 4px; }
+.leyenda-r { font-size: 14px; }
+/* En la ficha en mano y en la cola no hay hueco para desplazar: la pulsación larga se marca con un contorno */
+.foco .tira.cargando, .cola .tira.cargando { margin: 0; outline: 3px solid var(--claro); outline-offset: -3px; transition: outline-color .6s; }
+details.hechas .tira.est-hecha { margin: 0; }
