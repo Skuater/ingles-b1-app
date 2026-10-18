@@ -1,6 +1,6 @@
 /* sw.js — Hace que la app funcione sin conexión.
    Al cambiar cualquier archivo de la app, sube el número de VERSION. */
-const VERSION = 'b1-v7';
+const VERSION = 'b1-v8';
 const APP = ['./', './index.html', './styles.css', './plan.js', './db.js', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 

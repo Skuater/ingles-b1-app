@@ -577,6 +577,7 @@ function hojaBloque(f, b) {
   const form = FORMS[b.tipo];
   const n = semanaDe(f);
   const v = form ? form.cargar([...S.med.values()].filter((m) => m.ref === key), n) : {};
+  if (b.tipo === 'murphy' && b.unidad && !v.unidad) v.unidad = b.unidad;
   const radio = (k, t) => `<label class="pill"><input type="radio" name="estado" value="${k}" ${est === k ? 'checked' : ''}><span>${t}</span></label>`;
   abrirHoja(`<h2 class="hoja-tit">${esc(b.nombre)}</h2><p class="hoja-sub">${esc(detalleDe(b))}${detalleDe(b) ? '. ' : ''}${b.min} min previstos.</p>
     ${futuro ? '<p class="alerta a-info">Día futuro: no se puede registrar todavía.</p>' : `
